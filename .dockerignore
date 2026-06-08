@@ -1,0 +1,30 @@
+# Shared root build context for Dockerfile.api and Dockerfile.worker.
+# Keep the backend image lean and free of unrelated trees.
+
+.git
+.github
+.venv
+**/__pycache__
+*.pyc
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.coverage
+htmlcov
+
+# Other build contexts / unrelated code
+model-server
+frontend
+node_modules
+
+# Docs & specs (not needed at runtime)
+specs
+docs
+*.md
+!README.md
+Keel_Brief.pdf
+
+# Local env / secrets
+.env
+.env.*
+!.env.example

@@ -1,7 +1,7 @@
 # CLAUDE.md — Keel
 
 > Read this fully at the start of every session. It is the contract for how this codebase is built.
-> For deeper detail: `ARCH.md` (architecture), `PLAN.md` (what to build next), `SPEC.md` (component contracts), `SCHEDULE.md` (timeline), `DECISIONS.md` (why we chose things).
+> For deeper detail: ARCH.md (architecture), PLAN.md (what to build next), SPEC.md (component contracts), ENGINEERING_RULES.md (tactical standards / review checklist), constitution.md (principles), DECISIONS.md (why we chose things).
 
 ---
 
@@ -100,6 +100,7 @@ model-server/     # Separate lean service (onnxruntime only).
 
 ## 6. Tech stack (and why — do not substitute without a DECISIONS.md entry)
 
+- **uv** — package management (replaces pip/pip-tools/virtualenv). `pyproject.toml` + `uv.lock`. Never use `pip install`. In Dockerfiles, use `uv sync --frozen --no-dev`.
 - **FastAPI + Pydantic** — async API, typed boundaries, structured LLM/tool I/O.
 - **PostgreSQL + Row-Level Security + Alembic** — one DB; RLS enforces isolation. Hosts Plan entity, request queue, outbox, audit log.
 - **pgvector** — RAG in the same DB, tenant-filtered by construction.
@@ -116,6 +117,7 @@ model-server/     # Separate lean service (onnxruntime only).
 
 ## 7. Coding conventions
 
+- **`uv` for all dependency management.** `uv add <pkg>` to add, `uv sync` to install, `uv run <cmd>` to execute. Never `pip install`. The lockfile (`uv.lock`) is committed. Dockerfiles use `uv sync --frozen --no-dev`.
 - **Python 3.12, async throughout.** No sync DB calls in request paths.
 - **Type everything.** `mypy` is in CI. Pydantic models at every boundary.
 - **Dependency injection via FastAPI `Depends`.** Singletons (DB pool, Redis, model-server client, Vault) created in lifespan, not per-request.
@@ -224,8 +226,11 @@ Thresholds live in `tests/eval/eval_thresholds.yaml`. Eval report JSON → MinIO
 - Don't weaken guardrails or tenant filtering "to make a test pass."
 - Don't mark engine code done without the edge-case suite green.
 - Don't inline secrets or prompts.
+- do not make complex overengineering decisions
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+shell commands, and other important information, read the current plan:
+`specs/001-phase-0-foundation/plan.md` (and its `research.md`, `data-model.md`,
+`contracts/`, `quickstart.md`).
 <!-- SPECKIT END -->

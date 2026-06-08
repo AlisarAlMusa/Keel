@@ -1,0 +1,11 @@
+# model-server build context (its own directory). Keep the lean image lean.
+.venv
+**/__pycache__
+*.pyc
+.mypy_cache
+.ruff_cache
+.pytest_cache
+*.md
+!README.md
+.env
+.env.*

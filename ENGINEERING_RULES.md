@@ -261,3 +261,6 @@ Required/recommended:
 - `SECURITY.md`: auth, Vault, redaction, widget security;
 - `RUNBOOK.md`: operational/debug instructions;
 - `ENGINEERING_RULES.md`: standards and review checklist.
+- `constitution.md`
+- `CLAUDE.md`
+- `SPEC.md`
