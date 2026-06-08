@@ -13,26 +13,47 @@ Keel is a multi-tenant SaaS where university students converse with an AI agent 
 
 ## Quick start
 
+> **Status: Phase 0 (Foundation).** The stack stands up healthy, the database is
+> migrated with tenant isolation (RLS), and seed data loads. Intelligence
+> (engine, agent, models) and the React frontends arrive in later phases — see
+> [`PLAN.md`](PLAN.md). Full Phase 0 walkthrough: [`specs/001-phase-0-foundation/quickstart.md`](specs/001-phase-0-foundation/quickstart.md).
+
 ```bash
 # 1. Clone
 git clone https://github.com/<user>/keel.git && cd keel
 
-# 2. Configure
+# 2. Configure (defaults work for local; no edits needed to boot)
 cp .env.example .env
-# Edit .env with your LLM API key (all other secrets are auto-provisioned by Vault in dev mode)
 
-# 3. Run
-docker compose up --build
+# 3. Run the stack (api · worker · model-server · db · redis · minio · vault · mlflow)
+docker compose up -d --build
 
-# 4. Verify
-# API:           http://localhost:8000/healthz
-# Admin console: http://localhost:3000
-# Student widget: http://localhost:3001
-# MLflow:         http://localhost:5555
+# 4. Migrate + seed
+docker compose exec api uv run alembic upgrade head
+docker compose exec api uv run python -m scripts.seed
+
+# 5. Verify
+curl localhost:8000/healthz        # API liveness
+curl localhost:8000/readyz         # API readiness (db/redis/vault)
+curl localhost:9000/healthz        # model-server
+# MLflow UI:      http://localhost:5001
+# MinIO console:  http://localhost:9001
 # Vault:          http://localhost:8200
 ```
 
-Two tenants are seeded automatically with a mock catalog (20+ courses, prerequisite chains, sections, student transcripts). Open the student widget, type a plain-language request, and watch the propose → verify → predict → explain → approve loop in action.
+Two tenants are seeded with a mock catalog (24 courses each, prerequisite
+chains, sections, program requirements, student transcripts) and catalog text in
+MinIO. The app **fails closed** if Vault is unreachable (try
+`docker compose stop vault && docker compose restart api`).
+
+### Local development (without the full stack)
+
+```bash
+uv sync                            # backend env (api + worker)
+uv run ruff check . && uv run mypy src
+uv run pytest tests/unit           # unit tests (no infra needed)
+cd model-server && uv sync         # isolated model-server env
+```
 
 ---
 

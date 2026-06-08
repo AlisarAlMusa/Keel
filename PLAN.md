@@ -8,19 +8,19 @@ The ordered build plan with acceptance criteria. Check items off as they land. `
 
 ## Phase 0 — Foundation (Day 1)
 
-- [ ] 🔴 `SPEC.md` written for Plan entity, agent tool schemas, tenant isolation rules (use SpecKit to scaffold)
+- [x] 🔴 `SPEC.md` written for Plan entity, agent tool schemas, tenant isolation rules (use SpecKit to scaffold)
   - *Done when:* contracts exist for every Day-2/Day-4 component the human will need before coding.
-- [ ] 🔴 Repo layout per `CLAUDE.md` §5; `.gitignore`, `.env.example`, `README` stub
+- [x] 🔴 Repo layout per `CLAUDE.md` §5; `.gitignore`, `.env.example`, `README` stub
   - *Done when:* `api/services/repositories/domain/infra/workers/agent` dirs exist with `__init__`.
-- [ ] 🔴 `docker-compose.yml`: api, worker, model-server, db, redis, minio, vault, mlflow
+- [x] 🔴 `docker-compose.yml`: api, worker, model-server, db, redis, minio, vault, mlflow
   - *Done when:* `docker compose up` brings all services to healthy (empty apps OK).
-- [ ] Vault wired; app refuses to boot if unreachable
-- [ ] OTel / LangSmith tracing initialized in lifespan
-- [ ] 🔴 Alembic baseline migration (see schema below)
+- [x] Vault wired; app refuses to boot if unreachable
+- [x] OTel / LangSmith tracing initialized in lifespan
+- [x] 🔴 Alembic baseline migration (see schema below)
   - *Done when:* `alembic upgrade head` creates all tables + RLS policies on a clean DB.
-- [ ] Seed script: 2 tenants, ≥20 courses with prereq chains, sections, 2 transcripts; catalog text → MinIO for RAG
-- [ ] ⚙ CI skeleton: ruff + mypy + build + compose smoke test (green)
-- [ ] `DECISIONS.md` started
+- [x] Seed script: 2 tenants, ≥20 courses with prereq chains, sections, 2 transcripts; catalog text → MinIO for RAG
+- [x] ⚙ CI skeleton: ruff + mypy + build + compose smoke test (green)
+- [x] `DECISIONS.md` started
 
 **Baseline schema (Phase 0):** `tenants`, `users`, `students`, `courses` (code, name, credits, difficulty, offering_term), `prerequisites` (course_id, prereq_id), `corequisites`, `sections` (course_id, time, capacity, enrolled), `program_requirements`, `student_transcript`, `plans` (id, tenant_id, student_id, name, version, is_active, plan_data, created_at), `enrollments`, `waitlist`, `request_queue` (type, payload, status), `outbox` (event, payload, published_at), `audit_log`, `notifications`. RLS on every tenant-owned table.
 

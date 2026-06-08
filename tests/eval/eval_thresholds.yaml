@@ -1,0 +1,17 @@
+# Eval gate thresholds (constitution Principle V).
+#
+# Each gate's threshold lands the SAME DAY its feature lands — not at the end.
+# Phase 0 ships no models/engine/RAG, so there are no numeric gates yet; this
+# file reserves the home and documents the gates to come. No threshold may be
+# zero/disabled once its feature exists.
+#
+# Gates (added in their phase):
+#   planner_correctness   # Phase 1 — every golden plan validates; broken plans flagged
+#   intent_f1             # Phase 2 — macro-F1 on held-out set
+#   grad_risk             # Phase 6 — macro-F1 + at-risk recall
+#   tool_selection        # Phase 4 — correct tool (or none) on golden set
+#   rag_ragas             # Phase 6 — faithfulness / relevancy / context recall+precision
+#   guardrails_redteam    # Phase 3 — 100% injection + cross-tenant refused; PII never leaks
+#   smoke                 # Phase 0 — stack up healthy (enforced in CI now)
+
+gates: {}
