@@ -1,36 +1,37 @@
 # Keel local stack — one command brings up all eight services.
 #   docker compose up -d --build
 #
-# Local-only credentials live here (dev Vault token, local DB password). These
-# are NOT production secrets; production resolves everything from a real Vault.
+# Credentials are loaded from .env (gitignored). Copy .env.example → .env
+# and fill in values before running. Local-only dev values; production
+# resolves everything from a real Vault cluster.
 
 name: keel
 
 x-app-env: &app-env
-  KEEL_ENV: local
-  KEEL_LOG_LEVEL: INFO
-  DATABASE_URL: postgresql+asyncpg://keel_app:placeholder@db:5432/keel
-  REDIS_URL: redis://redis:6379/0
-  MINIO_ENDPOINT: http://minio:9000
-  MINIO_BUCKET: keel-artifacts
-  MLFLOW_TRACKING_URI: http://mlflow:5000
-  OTEL_EXPORTER_OTLP_ENDPOINT: ""
-  OTEL_SERVICE_NAME: keel-api
-  LANGSMITH_TRACING: "false"
-  MODEL_SERVER_URL: http://model-server:9000
-  VAULT_ADDR: http://vault:8200
-  VAULT_TOKEN: keel-dev-root-token
-  VAULT_KV_MOUNT: secret
-  VAULT_SECRET_PATH: keel/app
+  KEEL_ENV: ${KEEL_ENV}
+  KEEL_LOG_LEVEL: ${KEEL_LOG_LEVEL}
+  DATABASE_URL: ${DATABASE_URL}
+  REDIS_URL: ${REDIS_URL}
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+  MINIO_BUCKET: ${MINIO_BUCKET}
+  MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME}
+  LANGSMITH_TRACING: ${LANGSMITH_TRACING}
+  MODEL_SERVER_URL: ${MODEL_SERVER_URL}
+  VAULT_ADDR: ${VAULT_ADDR}
+  VAULT_TOKEN: ${VAULT_TOKEN}
+  VAULT_KV_MOUNT: ${VAULT_KV_MOUNT}
+  VAULT_SECRET_PATH: ${VAULT_SECRET_PATH}
 
 services:
   db:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: keel
-      KEEL_APP_PASSWORD: keel_local_pw
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      KEEL_APP_PASSWORD: ${KEEL_APP_PASSWORD}
     ports:
       - "5432:5432"   # exposed for local dev + migration tests
     volumes:
@@ -56,8 +57,8 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
       - "9001:9001"   # console
     volumes:
@@ -73,11 +74,13 @@ services:
     image: hashicorp/vault:1.18
     cap_add: [IPC_LOCK]
     environment:
-      VAULT_DEV_ROOT_TOKEN_ID: keel-dev-root-token
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_TOKEN}
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
       VAULT_ADDR: http://127.0.0.1:8200
-      VAULT_TOKEN: keel-dev-root-token
+      VAULT_TOKEN: ${VAULT_TOKEN}
     command: server -dev
+    ports:
+      - "8200:8200"
     healthcheck:
       test: ["CMD-SHELL", "vault status -address=http://127.0.0.1:8200 >/dev/null 2>&1 || exit 1"]
       interval: 5s
@@ -93,17 +96,22 @@ services:
       vault:
         condition: service_healthy
     environment:
-      VAULT_ADDR: http://vault:8200
-      VAULT_TOKEN: keel-dev-root-token
+      VAULT_ADDR: ${VAULT_ADDR}
+      VAULT_TOKEN: ${VAULT_TOKEN}
+      KEEL_APP_PASSWORD: ${KEEL_APP_PASSWORD}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      KEEL_JWT_SIGNING_KEY: ${KEEL_JWT_SIGNING_KEY}
+      KEEL_WIDGET_TOKEN_SECRET: ${KEEL_WIDGET_TOKEN_SECRET}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         vault kv put secret/keel/app \
-          db_password=keel_local_pw \
-          minio_access_key=minioadmin \
-          minio_secret_key=minioadmin123 \
-          jwt_signing_key=local-dev-jwt-key \
-          widget_token_secret=local-dev-widget-secret
+          db_password=$KEEL_APP_PASSWORD \
+          minio_access_key=$MINIO_ROOT_USER \
+          minio_secret_key=$MINIO_ROOT_PASSWORD \
+          jwt_signing_key=$KEEL_JWT_SIGNING_KEY \
+          widget_token_secret=$KEEL_WIDGET_TOKEN_SECRET
     networks: [keel]
 
   mlflow:

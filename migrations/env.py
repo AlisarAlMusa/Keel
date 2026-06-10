@@ -1,7 +1,7 @@
 """Alembic environment — async, targets the ORM metadata.
 
 The database URL comes from ``Settings`` (env), never hardcoded. Migrations run
-with the asyncpg driver. Autogenerate targets ``keel.infra.orm.Base.metadata``;
+with the asyncpg driver. Autogenerate targets ``keel.infra.database.models.Base.metadata``;
 RLS/extension statements are hand-authored in the migration (autogenerate cannot
 emit them).
 """
@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from sqlalchemy.pool import NullPool
 
 from keel.config import get_settings
-from keel.infra.orm import Base
+from keel.infra.database.models import Base
 
 config = context.config
 

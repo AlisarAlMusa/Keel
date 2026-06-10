@@ -1,11 +1,7 @@
-"""Database access infrastructure.
+"""Session utilities — tenant binding and context managers.
 
-Async SQLAlchemy engine + session factory. The app connects as the
-non-superuser role ``keel_app`` so PostgreSQL Row-Level Security is enforced
-(superusers bypass RLS). Every unit of work sets the tenant context via
-``set_tenant`` so RLS policies (``current_setting('app.tenant_id')``) scope rows.
-
-Created once at startup (lifespan singleton), injected via ``api.deps``.
+Every unit of work sets the tenant context via ``set_tenant`` so RLS policies
+(``current_setting('app.tenant_id')``) scope rows to the correct tenant.
 """
 
 from __future__ import annotations
@@ -15,21 +11,7 @@ from contextlib import asynccontextmanager
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-
-
-def create_engine(database_url: str, *, echo: bool = False) -> AsyncEngine:
-    """Create the async engine. ``database_url`` uses the asyncpg driver."""
-    return create_async_engine(database_url, echo=echo, pool_pre_ping=True)
-
-
-def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
-    return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 async def set_tenant(session: AsyncSession, tenant_id: UUID) -> None:
