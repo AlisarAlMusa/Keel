@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from keel import __version__
 from keel.api.routers import health
 from keel.config import Settings, get_settings
-from keel.infra import db as db_infra
+from keel.infra.database import engine as db_infra
 from keel.infra import redis as redis_infra
 from keel.infra import storage as storage_infra
 from keel.infra import tracing

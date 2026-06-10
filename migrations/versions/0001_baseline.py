@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-from keel.infra.orm import TENANT_OWNED_TABLES
+from keel.infra.database.models import TENANT_OWNED_TABLES
 
 revision: str = "0001_baseline"
 down_revision: str | None = None

@@ -19,6 +19,9 @@ htmlcov/
 .env.*
 !.env.example
 
+Keel_Brief.pdf
+
+
 # Node (frontend, Phase 5)
 node_modules/
 

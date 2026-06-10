@@ -2,7 +2,7 @@
 
 Pure Pydantic v2 models, ``frozen=True`` where they are value objects. This
 module imports nothing from ``infra``/``services`` and performs no I/O. These
-are SEPARATE from the SQLAlchemy ORM models in ``infra.orm`` — repositories map
+are SEPARATE from the SQLAlchemy ORM models in ``infra.database.models`` — repositories map
 between the two.
 
 Phase 0 ships the catalog/identity vocabulary used by the engine in later
