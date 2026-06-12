@@ -109,6 +109,34 @@ backend + MinIO artifact store described in `ARCH.md`.
 **Rejected (for now).** Postgres + MinIO-backed MLflow — deferred to the phase
 that actually logs runs, to avoid image-dependency fragility in the foundation.
 
+### D-007b — MLflow upgraded to Postgres + MinIO in Phase 1; artifacts proxy-served
+
+**Decision.** At Phase 1 (when model training begins), MLflow is upgraded from
+the Phase 0 SQLite/volume config to: Postgres as the backend store (metadata +
+model registry) and MinIO as the artifact store. MLflow is started with
+`--serve-artifacts`, which proxies artifact uploads through the tracking server's
+HTTP API rather than requiring clients to write directly to S3.
+
+**Rationale.** Training runs from Colab (remote) — a Colab notebook cannot reach a
+Docker-internal volume or `http://minio:9000`. With `--serve-artifacts`, Colab
+only needs to reach the tracking server (tunneled via ngrok/cloudflared to
+`localhost:5001`); it uploads artifacts over HTTP to MLflow, which forwards them
+to MinIO. No S3 credentials needed in Colab. This also means the model registry
+and all run artifacts survive container restarts (Postgres + MinIO are both
+durable volumes).
+
+**Implementation.** Custom `Dockerfile.mlflow` adds `psycopg2-binary` + `boto3`
+to the slim base image. `minio-init` one-shot container creates both
+`keel-artifacts` and `keel-mlflow` buckets on first boot. `db-init.sh` creates
+a separate `mlflow` database in Postgres via `\gexec` (idempotent, works outside
+a transaction). This is the "Backed by MinIO + Postgres" state described in
+`ARCH.md §6`.
+
+**Rejected.** Direct S3 client in Colab — requires exposing MinIO credentials
+and MinIO port to the tunnel, adds credential management in Colab. SQLite/volume
+retained beyond Phase 0 — remote clients cannot write to a local volume; only
+works if training is always local.
+
 ### D-008 — LangGraph/LangChain not installed in Phase 0
 
 **Decision.** Agent dependencies (LangGraph/LangChain) are deferred to Phase 2,
@@ -116,3 +144,50 @@ when the bounded agent is built — they are not in the Phase 0 backend lockfile
 
 **Rationale.** Keep the foundation image lean; install heavy agent deps the day
 the agent lands. The `agent/` package is scaffolded empty so the code has a home.
+
+## Phase 1 - Classifier models and engine logic
+
+### The Intent Classifier & Router — Design Narrative
+
+**What it is.** A small trained text-classification model (trained model #1 of 2) that reads every incoming student message and returns one label plus a confidence score. The label maps directly to exactly one handler in the backend. It is the front door of the whole system.
+
+**The problem it solves.** Most chat traffic is simple: lookups, status checks, plan management, fully-specified actions. Sending every message to an LLM agent would be slow, expensive, and unnecessary. The router exists to keep the LLM off cheap, enumerable decisions — and to keep the LLM's flexibility reserved for the turns that genuinely need it.
+
+**The routing rule (3 lines).**
+
+1. If the session has a pending approval or an active flow → the deterministic state machine handles the turn (no classifier, no LLM).
+2. Else if classifier confidence ≥ threshold → run the single handler mapped to that label, directly.
+3. Else (low confidence, ambiguous, or multi-intent) → send to the bounded LLM agent, which picks among the same handlers as tools.
+
+**The labels (13).** `plan`, `whatif`, `advise`, `audit`, `predict`, `register`, `waitlist`, `plans_manage`, `grad_apply`, `major_change`, `petition`, `escalate`, `out_of_scope`. One label = one handler. We renamed "register" thinking into a richer set: action-type requests get their own labels because they have distinctive vocabulary ("waitlist", "graduation", "petition", "switch my major"), so a small classifier separates them reliably.
+
+**Key decision 1 — handlers are fixed pipelines, not agent improvisation.** Workflows whose steps always run in the same order (plan → eligible pool → propose → verify → repair → predict risk → explain) are written as code: composite tools. The LLM works *inside* specific steps (extract constraints, propose candidates, explain results) but never decides the order. Reason: a fixed order paid to an LLM on every request is wasted cost and a reliability risk; code is testable once and correct forever.
+
+**Key decision 2 — the agent is the fallback, not the main path.** It handles three cases only: low-confidence turns, multi-intent turns ("plan my semester and register me"), and conversational repair ("no, make it lighter"). Its tools are the same composite pipelines used by direct routing — built once, shared, no duplicated logic. It is bounded: tool allowlist, loop cap, Pydantic-validated inputs.
+
+**Why 13 labels doesn't hurt accuracy.** The classes are lexically distinct, and the design absorbs mistakes: confusable or mixed messages naturally produce low confidence and fall to the agent, which resolves them. A misroute is never dangerous, because every action still passes the deterministic engine check and the human approval gate before any write. The classifier proposes a route; deterministic systems and approval still protect every outcome — the project's core principle applied to routing itself.
+
+**Training & evaluation.** Three-way comparison: classical ML (TF-IDF + logistic regression/GBM) vs small DL model (DistilBERT-class, exported to ONNX) vs LLM zero-shot baseline. Dataset: hand-written seed examples LLM-augmented to ~50–80 per class, deduplicated, stratified held-out split, no leakage. Macro-F1 gates CI; the confusion matrix and the confidence-threshold choice are committed with the eval report. Served from the lean model-server (no torch), milliseconds per call.
+
+**What this buys the project.** Cheap turns cost ~0 tokens; routing is observable and testable; the attack surface shrinks (out_of_scope filters junk before any LLM sees it); and the capstone gets a genuinely justified trained model — not a model added for show, but one whose absence would make every message more expensive.
+
+
+### Router label set expanded to 15 (added `my_info`, `chitchat`)
+Real traffic includes turns that fit no feature module but that we can answer
+from our own tables ("what time is my class?", "show my grades") and pure
+small talk ("hello", "thanks"). Added:
+- `my_info` → deterministic DB lookup over the student's own enrollments,
+  sections, and transcript + template response. No RAG (structured data lives
+  in tables, not prose), no LLM. Zero token cost.
+- `chitchat` → canned friendly template + one-line capability hint. No LLM.
+Both keep cheap, high-frequency turns off the LLM entirely — the router's
+reason to exist. Unknown/unanswerable turns still fall to `advise`-with-empty-
+retrieval ("I couldn't find this — want an advisor?") or `out_of_scope`.
+
+### Approval state moved to Postgres; Redis keeps only session memory
+Pending approval actions are safety-critical state (loss → lost write;
+replay → double write). They live in a `pending_actions` table
+(payload, status, expires_at, idempotency_key); the approval endpoint reads
+this row, so approvals survive a Redis restart. Redis holds only ephemeral
+conversation context with TTL, where loss is harmless. Persistent where
+correctness matters; cache where convenience matters.

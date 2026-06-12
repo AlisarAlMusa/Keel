@@ -28,3 +28,11 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     GRANT ALL ON SCHEMA public TO keel_app;
     GRANT ALL ON DATABASE ${POSTGRES_DB} TO keel_app;
 EOSQL
+
+# Separate database for the MLflow tracking server (metadata + model registry).
+# Not tenant data — owned by the superuser, no RLS. CREATE DATABASE can't run in
+# a DO block or transaction, so use \gexec to make it idempotent.
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    SELECT 'CREATE DATABASE mlflow'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'mlflow')\gexec
+EOSQL

@@ -22,6 +22,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.49b0",
     "opentelemetry-exporter-otlp>=1.28",
     "langsmith>=0.1.140",
+    "mlflow>=3.13.0",
 ]
 
 [dependency-groups]

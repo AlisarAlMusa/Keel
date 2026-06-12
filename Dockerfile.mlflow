@@ -1,0 +1,9 @@
+# MLflow tracking server with the drivers the slim base image lacks:
+#   psycopg2-binary -> Postgres backend store (metadata + model registry)
+#   boto3           -> MinIO/S3 artifact store (served via --serve-artifacts)
+#
+# pip is intentional: this is a third-party image with no uv/lockfile.
+# The uv rule applies to Keel's own packages (api, worker, model-server).
+FROM ghcr.io/mlflow/mlflow:v2.17.2
+
+RUN pip install --no-cache-dir psycopg2-binary boto3
