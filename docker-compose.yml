@@ -198,15 +198,18 @@ services:
         condition: service_completed_successfully
     networks: [keel]
 
-  # One-shot: pull the current production grad-risk artifacts from MLflow into
-  # the shared model-artifacts volume, then exit. model-server waits for this.
+  # One-shot: pull the current production model artifacts (grad-risk + intent)
+  # from MLflow into the shared model-artifacts volume, then exit. model-server
+  # waits for this. Hostnames are in-network (this container only runs inside the
+  # compose network) — host-facing ${MLFLOW_TRACKING_URI} (localhost:5001) is for
+  # running the pull script from the Mac, not here.
   model-artifacts-sync:
     build:
       context: .
       dockerfile: Dockerfile.api
     command: ["python", "scripts/pull_model_artifacts.py", "--dest", "/app/ml"]
     environment:
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
