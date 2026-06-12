@@ -19,6 +19,7 @@ Asserts:
   3. macro_f1 >= macro_f1_min
   4. covered accuracy >= covered_accuracy_min at the router threshold
   5. macro_f1 <= macro_f1_trivial_guard_max  (data must not be trivially clean)
+  6. 100% accuracy on the held-out golden set (obvious canonical case per label)
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ LABEL_MAP_PATH = ARTIFACTS_DIR / "label_map.json"
 ROUTER_CFG_PATH = ARTIFACTS_DIR / "router_config.json"
 DATASET_CSV = DATA_DIR / "intent_dataset.csv"
 SPLIT_JSON = DATA_DIR / "intent-split.json"
+GOLDEN_CSV = DATA_DIR / "intent_golden.csv"
 THRESHOLDS_PATH = REPO_ROOT / "tests" / "eval" / "eval_thresholds.yaml"
 
 
@@ -87,6 +89,15 @@ def test_data():
     df = pd.read_csv(DATASET_CSV)
     split = json.loads(SPLIT_JSON.read_text())
     return df.iloc[split["test"]].reset_index(drop=True)
+
+
+@pytest.fixture(scope="module")
+def golden_data():
+    """Held-out obvious canonical cases (one per label, x2) — must all be right."""
+    _skip_if_no_artifact()
+    import pandas as pd
+
+    return pd.read_csv(GOLDEN_CSV)
 
 
 def test_label_map_matches_generator(label_map):
@@ -153,3 +164,19 @@ def test_trivial_guard(model, test_data):
     assert macro_f1 <= max_f1, (
         f"macro_f1={macro_f1:.4f} >= trivial guard {max_f1} — data may be too clean"
     )
+
+
+def test_golden_accuracy(model, golden_data):
+    """Every obvious, held-out golden case must be classified correctly."""
+    thresholds = _load_thresholds()
+    min_acc = thresholds.get("golden_accuracy_min", 1.0)
+
+    preds = np.array(model.predict(golden_data["text"].tolist()))
+    y = np.array(golden_data["label"].tolist())
+    acc = float((preds == y).mean())
+
+    misses = [
+        f"{golden_data['text'][i]!r} (true={y[i]}, pred={preds[i]})"
+        for i in np.where(preds != y)[0]
+    ]
+    assert acc >= min_acc, f"Golden accuracy={acc:.4f} below {min_acc}. Misclassified: {misses}"

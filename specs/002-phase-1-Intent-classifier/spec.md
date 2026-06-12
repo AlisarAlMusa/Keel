@@ -130,15 +130,21 @@ Report for all three models. The gate checks the **production** model (currently
 - **Also report:** accuracy, per-message latency, confusion matrix.
 - **Trivial guard:** `macro_f1 < macro_f1_trivial_guard_max` (data must not be trivially clean).
 - **Contract check:** `label_map.json` label order == `LABELS` in the generator.
+- **Golden gate:** 100% accuracy on `intent_golden.csv` — the intent analogue of grad-risk's
+  `grad_risk_golden_edge.csv`. A tiny, hand-written set of *unambiguous* messages (2 per label
+  = 30), **held out of training** and phrased differently from the seeds (the generator fails
+  the build if any golden line is a near-duplicate of a training row). Tests generalization on
+  obvious cases, not memorization. The router must get every one right.
 
 Thresholds live in `tests/eval/eval_thresholds.yaml` under `intent:` — set ~5 points below the
 first clean run's real numbers, then commit.
 
 ```yaml
 intent:
-  macro_f1_min: <real − 0.05>
-  covered_accuracy_min: <real − 0.05>
+  macro_f1_min: 0.75              # actual 0.8034
+  covered_accuracy_min: 0.87      # actual 0.9262 at the router threshold
   macro_f1_trivial_guard_max: 0.99
+  golden_accuracy_min: 1.0
 ```
 
 ## 8. Serving / routing contract (for later phases)
@@ -164,6 +170,7 @@ endpoint when serving lands.
 |---|---|---|
 | Full dataset | `data/intent_dataset.csv` | from the generator (1,050 rows) |
 | Split | `data/intent-split.json` | grouped 80/20, written by the generator |
+| Golden set | `data/intent_golden.csv` | 30 held-out obvious cases (2/label); CI requires 100% |
 | Model (serving) | `ml/intent/artifacts/model_a.joblib` | `model_b.onnx` (+ `tokenizer_b/`) only if B wins |
 | Label map | `ml/intent/artifacts/label_map.json` | names + label2id + id2label |
 | Router config | `ml/intent/artifacts/router_config.json` | threshold + routing policy |

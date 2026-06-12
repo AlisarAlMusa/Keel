@@ -125,8 +125,11 @@ order (mirrors `specs/003-…/plan.md` §11):
 - [ ] **7d** Write `tests/eval/test_intent_gate.py`: rebuild the test split from
   `intent_dataset.csv` + `intent-split.json["test"]`, load `model_a.joblib`, assert
   macro-F1 ≥ min, routing accuracy-on-covered ≥ min at `router_config.fallback_threshold`,
-  `label_map.json` order == generator `LABELS`, and the trivial guard. Add the `intent:` block
-  to `eval_thresholds.yaml` (mins ~5 pts below the real scores).
+  `label_map.json` order == generator `LABELS`, the trivial guard, and **100% on
+  `intent_golden.csv`** (the held-out obvious-case set, the intent analogue of
+  `grad_risk_golden_edge.csv`; written by the generator from a `GOLDEN` dict with a
+  near-duplicate-vs-training guard so it can never become trivial). Add the `intent:` block to
+  `eval_thresholds.yaml` (mins ~5 pts below the real scores; `golden_accuracy_min: 1.0`).
 
 - [ ] **7e** Wire `tests/eval` into `.github/workflows/ci.yml` so both intent and grad-risk
   gates run on every PR. Committed artifacts make CI hermetic (no MLflow access needed).

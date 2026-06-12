@@ -319,6 +319,29 @@ threshold (actual 0.926 at 0.5115), (3) `label_map` order == generator `LABELS`,
 ensures a model regression that quietly lowers covered accuracy is caught, not
 just one that lowers overall F1.
 
+### D-IC-006 — Intent golden set (held-out obvious cases, 100% gate)
+
+**Decision.** `data/intent_golden.csv` — 30 hand-written, unambiguous messages
+(2 per label) the production router MUST classify correctly. Written by the
+generator from a `GOLDEN` dict, held out of training, with a build-time guard
+that fails if any golden line is a near-duplicate (Jaccard ≥ 0.92) of a training
+row. CI gate: `golden_accuracy_min: 1.0`. The intent analogue of
+`grad_risk_golden_edge.csv`.
+
+**Why.** The test-split macro-F1 (0.80) tolerates errors on hard/ambiguous
+phrasings — correctly, since those fall to the agent. But the router must never
+fail an *obvious* turn ("apply for graduation", "what's my gpa"). A 100% gate on
+held-out canonical cases catches a regression that breaks the easy path even if
+aggregate F1 looks fine. The near-dup guard keeps the set a real generalization
+check, not memorization. Two initial drafts were reworded after the model missed
+them — confirming the set is genuinely held-out and the gate has teeth.
+
+**Note.** Fixed a latent path bug found while adding this: the generator used
+`parents[2]` (correct when it lived in `training/intent/`) but had moved to
+`scripts/`, so it was writing outputs to `<repo>/../data/` — outside the repo.
+Corrected to `parents[1]`; regenerated `intent_dataset.csv` / `intent-split.json`
+are byte-identical to the committed (model-trained) versions.
+
 ### D-IC-004 — Serving uses `model.predict()` / `model.classes_`, never `label_map.id2label`
 
 **Decision.** scikit-learn sorts string class labels, so Model A's

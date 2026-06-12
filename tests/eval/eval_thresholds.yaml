@@ -19,6 +19,7 @@ gates:
     macro_f1_min: 0.75              # actual 0.8034 − 0.05 headroom
     covered_accuracy_min: 0.87      # actual 0.9262 at threshold − 0.05 headroom
     macro_f1_trivial_guard_max: 0.99
+    golden_accuracy_min: 1.0        # obvious held-out cases must ALL be correct
 
   grad_risk:
     macro_f1_min: 0.77            # actual 0.8215 − 0.05 headroom

@@ -1567,6 +1567,79 @@ SEEDS: dict[str, list[list[str]]] = {
     ],
 }
 
+# ---------------------------------------------------------------------------
+# GOLDEN — the intent analogue of grad_risk_golden_edge.csv.
+# A tiny, hand-written set of UNAMBIGUOUS, canonical messages — one obvious case
+# the production router MUST get right per label (2 each = 30). These are held
+# out of training (never written to intent_dataset.csv) and are deliberately
+# phrased *differently* from the training seeds, so passing them tests
+# generalization, not memorization. A guard in main() fails the build if any
+# golden line is a near-duplicate of a training row (NEAR_DUP_JACCARD), so this
+# set can never become trivial. The CI gate requires 100% accuracy on it.
+# ---------------------------------------------------------------------------
+GOLDEN: dict[str, list[str]] = {
+    "plan": [
+        "put together a course schedule for me for next term",
+        "help me work out which classes to take in the spring",
+    ],
+    "whatif": [
+        "what happens to my graduation timeline if i drop a course",
+        "suppose i added one more class this term, how does that look",
+    ],
+    "advise": [
+        "in your opinion is the algorithms course tough",
+        "which of the electives would you say is the most manageable",
+    ],
+    "audit": [
+        "what coursework do i still have outstanding before i can graduate",
+        "how many degree credits am i still short by",
+    ],
+    "predict": [
+        "what are the odds i actually graduate on schedule",
+        "am i in danger of not completing my degree in time",
+    ],
+    "register": [
+        "go ahead and enroll me into the databases course",
+        "process my enrollment for the linear algebra class",
+    ],
+    "waitlist": [
+        "add my name to the waiting list for operating systems",
+        "i'd like to join the waiting list for that section since it filled up",
+    ],
+    "plans_manage": [
+        "save this schedule into my list of saved plans",
+        "pull up every plan i have saved so far",
+    ],
+    "grad_apply": [
+        "i would like to file my application to graduate",
+        "go ahead and submit my paperwork for degree conferral",
+    ],
+    "major_change": [
+        "make it official and change my declared major to computer science",
+        "i have decided — record my major as economics now",
+    ],
+    "petition": [
+        "i want to request an exception to skip a course prerequisite",
+        "file a formal request for me to exceed the credit limit this term",
+    ],
+    "escalate": [
+        "please put me in touch with a human academic advisor",
+        "i would rather have an actual staff member handle this",
+    ],
+    "out_of_scope": [
+        "go ahead and write my term paper for my history class",
+        "tell me whether it is going to rain this weekend",
+    ],
+    "my_info": [
+        "remind me what my current grade point average is",
+        "check whether there are any holds sitting on my account",
+    ],
+    "chitchat": [
+        "hey there, how is your day going",
+        "thanks a ton, you have been super helpful",
+    ],
+}
+
 
 # ---------------------------------------------------------------------------
 # Dedup helpers
@@ -1692,12 +1765,35 @@ def make_split(rows: list[Row]) -> dict[str, Any]:
     }
 
 
+def build_golden(train_rows: list[Row]) -> list[Row]:
+    """Flatten GOLDEN -> rows, guarding that none is a near-dup of a train row.
+
+    The guard keeps the golden set a real generalization check: if a golden line
+    overlaps a training row at >= NEAR_DUP_JACCARD it raises, forcing a reword.
+    """
+    train_norms = [normalize(r["text"]) for r in train_rows]
+    golden: list[Row] = []
+    for label in LABELS:
+        assert label in GOLDEN, f"GOLDEN missing label {label}"
+        for text in GOLDEN[label]:
+            norm = normalize(text)
+            if is_near_duplicate(norm, train_norms):
+                raise RuntimeError(
+                    f"Golden line leaks into training (>= {NEAR_DUP_JACCARD} Jaccard): "
+                    f"{text!r} ({label}). Reword it to keep the golden set held-out."
+                )
+            golden.append({"text": text, "label": label})
+    return golden
+
+
 def main() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
+    # scripts/generate_intent_dataset.py → repo root is one level up.
+    repo_root = Path(__file__).resolve().parents[1]
     data_dir = repo_root / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     csv_path = data_dir / "intent_dataset.csv"
     split_path = data_dir / "intent-split.json"
+    golden_path = data_dir / "intent_golden.csv"
 
     rows = build_rows()
 
@@ -1712,9 +1808,17 @@ def main() -> None:
     with split_path.open("w", encoding="utf-8") as f:
         json.dump(split, f, indent=2)
 
+    # Build + write the held-out golden set (obvious canonical cases per label).
+    golden = build_golden(rows)
+    with golden_path.open("w", newline="", encoding="utf-8") as f:
+        gw = csv.DictWriter(f, fieldnames=["text", "label"])
+        gw.writeheader()
+        gw.writerows(golden)
+
     # Report.
     print(f"\nWrote {len(rows)} rows -> {csv_path}")
-    print(f"Wrote split -> {split_path}\n")
+    print(f"Wrote split -> {split_path}")
+    print(f"Wrote {len(golden)} golden rows -> {golden_path}\n")
 
     print("Label counts:")
     counts: dict[str, int] = {label: 0 for label in LABELS}
