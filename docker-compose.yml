@@ -198,17 +198,45 @@ services:
         condition: service_completed_successfully
     networks: [keel]
 
+  # One-shot: pull the current production grad-risk artifacts from MLflow into
+  # the shared model-artifacts volume, then exit. model-server waits for this.
+  model-artifacts-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["python", "scripts/pull_model_artifacts.py", "--dest", "/app/ml"]
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - model-artifacts:/app/ml
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks: [keel]
+
   model-server:
     build:
       context: ./model-server
       dockerfile: Dockerfile
+    environment:
+      GRAD_RISK_ARTIFACTS_DIR: /app/ml/grad_risk/artifacts
     ports:
       - "9000:9000"
+    volumes:
+      - model-artifacts:/app/ml
+    depends_on:
+      model-artifacts-sync:
+        condition: service_completed_successfully
     networks: [keel]
 
 volumes:
   db-data:
   minio-data:
+  model-artifacts:
   # MLflow no longer needs a volume — metadata lives in Postgres, artifacts in MinIO.
 
 networks:
