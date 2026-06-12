@@ -8,7 +8,7 @@ disambiguated with truthful labels.
 
 Outputs (written to <repo>/data/):
   - intent_dataset.csv : columns text,label,seed_group_id  (1,050 rows)
-  - split.json         : grouped, stratified 80/20 train/test split
+  - intent-split.json  : grouped, stratified 80/20 train/test split
 
 Design (per the brief + ENGINEERING_RULES §12 leakage prevention):
   - 15 labels x 70 examples = 1,050.
@@ -18,7 +18,7 @@ Design (per the brief + ENGINEERING_RULES §12 leakage prevention):
     appears on both sides — paraphrase leakage would inflate test scores.
 
 Run:
-  uv run python training/intent/generate_intent_dataset.py
+  uv run python scripts/generate_intent_dataset.py
 """
 
 from __future__ import annotations
@@ -28,6 +28,10 @@ import json
 import random
 import re
 from pathlib import Path
+from typing import Any
+
+# One dataset row: {"text": str, "label": str, "seed_group_id": int}.
+Row = dict[str, Any]
 
 RANDOM_SEED = 42
 EXAMPLES_PER_LABEL = 70
@@ -1574,7 +1578,9 @@ def normalize(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-# Token-set Jaccard is a simple, fast way to catch near-duplicates that differ by small words or typos.
+
+# Token-set Jaccard is a simple, fast way to catch near-duplicates that differ
+# by small words or typos.
 def jaccard(a: str, b: str) -> float:
     """Token-set Jaccard similarity of two normalized strings."""
     ta, tb = set(a.split()), set(b.split())
@@ -1594,16 +1600,16 @@ def is_near_duplicate(norm: str, kept_norms: list[str]) -> bool:
 # ---------------------------------------------------------------------------
 # Build the dataset
 # ---------------------------------------------------------------------------
-def build_rows() -> list[dict]:
+def build_rows() -> list[Row]:
     """Expand SEEDS -> rows, dedup globally, trim each label to exactly 70."""
     rng = random.Random(RANDOM_SEED)
-    rows: list[dict] = []
+    rows: list[Row] = []
     kept_norms: list[str] = []  # global, so cross-label dups are caught too
     seed_group_counter = 0
     dropped_dups = 0
 
     # label -> seed_group_id -> list of row dicts (so we can trim by group)
-    by_label: dict[str, dict[int, list[dict]]] = {label: {} for label in LABELS}
+    by_label: dict[str, dict[int, list[Row]]] = {label: {} for label in LABELS}
 
     for label in LABELS:
         seeds = SEEDS[label]
@@ -1623,7 +1629,7 @@ def build_rows() -> list[dict]:
 
     # Trim each label down to exactly EXAMPLES_PER_LABEL, removing from the
     # largest seed groups first so all ~12 seeds stay represented.
-    trimmed: list[dict] = []
+    trimmed: list[Row] = []
     for label in LABELS:
         groups = by_label[label]
         total = sum(len(v) for v in groups.values())
@@ -1643,7 +1649,7 @@ def build_rows() -> list[dict]:
     return trimmed
 
 
-def make_split(rows: list[dict]) -> dict:
+def make_split(rows: list[Row]) -> dict[str, Any]:
     """Grouped, label-stratified 80/20 split. No seed_group_id on both sides."""
     rng = random.Random(RANDOM_SEED)
 
@@ -1654,13 +1660,14 @@ def make_split(rows: list[dict]) -> dict:
         groups_by_label[label] = gids
 
     test_groups: set[int] = set()
-    for label, gids in groups_by_label.items():
+    for _label, gids in groups_by_label.items():
         shuffled = gids[:]
         rng.shuffle(shuffled)
         n_test = max(2, round(len(shuffled) * TEST_FRACTION))
         test_groups.update(shuffled[:n_test])
 
-    train_idx, test_idx = [], []
+    train_idx: list[int] = []
+    test_idx: list[int] = []
     for i, r in enumerate(rows):
         (test_idx if r["seed_group_id"] in test_groups else train_idx).append(i)
 
@@ -1690,7 +1697,7 @@ def main() -> None:
     data_dir = repo_root / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     csv_path = data_dir / "intent_dataset.csv"
-    split_path = data_dir / "split.json"
+    split_path = data_dir / "intent-split.json"
 
     rows = build_rows()
 
@@ -1711,7 +1718,7 @@ def main() -> None:
 
     print("Label counts:")
     counts: dict[str, int] = {label: 0 for label in LABELS}
-    seeds_per_label: dict[str, set] = {label: set() for label in LABELS}
+    seeds_per_label: dict[str, set[int]] = {label: set() for label in LABELS}
     for r in rows:
         counts[r["label"]] += 1
         seeds_per_label[r["label"]].add(r["seed_group_id"])
@@ -1723,8 +1730,10 @@ def main() -> None:
 
     total = sum(counts.values())
     print(f"\nTotal: {total} examples, {sum(len(s) for s in seeds_per_label.values())} seed groups")
-    print(f"Split: {split['n_train']} train / {split['n_test']} test "
-          f"({split['n_test'] / total:.0%} test)")
+    print(
+        f"Split: {split['n_train']} train / {split['n_test']} test "
+        f"({split['n_test'] / total:.0%} test)"
+    )
 
     # Hard guarantees.
     assert total == EXAMPLES_PER_LABEL * len(LABELS), f"expected 1050, got {total}"
