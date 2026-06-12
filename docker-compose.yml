@@ -207,7 +207,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
-    command: ["python", "scripts/pull_model_artifacts.py", "--dest", "/app/ml"]
+    command: ["python", "scripts/pull_model_artifacts.py", "--dest", "/app/ml", "--allow-missing"]
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000

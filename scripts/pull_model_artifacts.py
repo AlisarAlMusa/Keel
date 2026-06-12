@@ -22,6 +22,12 @@ Environment variables (all required when artifacts live in MinIO):
 The script exits non-zero if any model fails (model not found, MLflow
 unreachable, or a required artifact missing) so docker compose surfaces the
 error. Re-running is safe: files are overwritten in place.
+
+``--allow-missing`` (used by the docker compose sync service) downgrades a model
+that is *not registered yet* to a skip instead of a failure — the bootstrap / CI
+case where MLflow is fresh and empty. A model that IS registered but downloads
+badly (missing required artifact), and a genuine MLflow outage, still fail even
+with this flag.
 """
 
 from __future__ import annotations
@@ -82,13 +88,25 @@ def _require_env(name: str) -> str:
     return value
 
 
-def _pull_one(client: Any, spec: ModelSpec, dest: Path) -> list[str]:
-    """Sync one model. Returns a list of error strings (empty = success)."""
+def _looks_not_registered(exc: Exception) -> bool:
+    """True if the resolve error means 'no such model/alias' (vs MLflow down)."""
+    msg = str(exc).lower()
+    return any(
+        phrase in msg
+        for phrase in ("does not exist", "resource_does_not_exist", "not found", "no versions")
+    )
+
+
+def _pull_one(client: Any, spec: ModelSpec, dest: Path, allow_missing: bool) -> list[str]:
+    """Sync one model. Returns a list of error strings (empty = success/skip)."""
     print(f"\n── {spec.registry_name} @ {MODEL_ALIAS} ──────────────────────────────")
 
     try:
         version = client.get_model_version_by_alias(spec.registry_name, MODEL_ALIAS)
     except Exception as exc:
+        if allow_missing and _looks_not_registered(exc):
+            print("  - not registered yet; skipping  [allow-missing]")
+            return []
         return [f"{spec.registry_name}: could not resolve @ {MODEL_ALIAS}: {exc}"]
 
     run_id = version.run_id
@@ -124,7 +142,7 @@ def _pull_one(client: Any, spec: ModelSpec, dest: Path) -> list[str]:
     return errors
 
 
-def main(dest: Path) -> None:
+def main(dest: Path, allow_missing: bool) -> None:
     _require_env("MLFLOW_TRACKING_URI")
 
     try:
@@ -139,7 +157,7 @@ def main(dest: Path) -> None:
 
     all_errors: list[str] = []
     for spec in MODELS:
-        all_errors.extend(_pull_one(client, spec, dest))
+        all_errors.extend(_pull_one(client, spec, dest, allow_missing))
 
     if all_errors:
         print(f"\n{len(all_errors)} error(s):", file=sys.stderr)
@@ -158,5 +176,10 @@ if __name__ == "__main__":
         default=Path(__file__).resolve().parents[1] / "ml",
         help="Destination base directory (default: <repo_root>/ml)",
     )
+    parser.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help="Skip (don't fail on) models not yet registered — for bootstrap / CI.",
+    )
     args = parser.parse_args()
-    main(args.dest)
+    main(args.dest, args.allow_missing)
