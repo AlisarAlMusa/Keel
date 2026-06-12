@@ -280,3 +280,61 @@ joblib via the model-server's Python runtime is fully equivalent in this context
 (the model-server already runs Python). The SHA-256 boot check applies to
 whichever file is served; swapping to ONNX after the fact requires only
 re-pinning the hash, not re-training.
+## Phase 1 — Classifier Artifact Sync + CI Gates (both models)
+
+### D-IC-001 — One generalized MLflow pull script, not one per model
+
+**Decision.** `scripts/pull_model_artifacts.py` carries a `MODELS` registry and
+loops over every Keel model (`keel-grad-risk` → `ml/grad_risk/`,
+`keel-intent-router` → `ml/intent/`), resolving each at alias `production` and
+downloading its whole `artifacts/` directory. One docker-compose
+`model-artifacts-sync` service syncs both.
+
+**Why.** The resolve→download→validate logic is identical per model; a second
+script would duplicate it and drift. A declarative list keeps the boot-time sync
+to a single container and makes adding a future model a one-entry change. Each
+model declares its own *required* vs *optional* artifacts, so a winner that omits
+a file (e.g. intent Model A has no `model_b.onnx`) is handled gracefully.
+
+### D-IC-002 — Intent test set is index-based, not a standalone CSV
+
+**Decision.** The intent CI gate reconstructs its 175-row test set from
+`data/intent_dataset.csv` + `data/intent-split.json["test"]`. There is no
+materialized `intent_test.csv` (unlike grad-risk's `grad_risk_test.csv`).
+
+**Why.** The intent split was always stored as row indices grouped by
+`seed_group_id` (the leakage guarantee lives in the index assignment). Both source
+files are committed, so the reconstruction is deterministic and hermetic in CI. A
+separate CSV would duplicate data already present and risk drift on regeneration.
+
+### D-IC-003 — Intent gate enforces macro-F1 AND routing coverage
+
+**Decision.** `tests/eval/test_intent_gate.py` asserts (1) macro-F1 ≥ 0.75
+(actual 0.8034), (2) accuracy-on-covered ≥ 0.87 at the `router_config.json`
+threshold (actual 0.926 at 0.5115), (3) `label_map` order == generator `LABELS`,
+(4) `model.classes_` cover exactly the 15 labels, (5) a trivial guard.
+
+**Why.** macro-F1 alone does not protect the *routing policy* that actually ships
+— the threshold decides direct-handler vs agent. Gating accuracy-on-covered
+ensures a model regression that quietly lowers covered accuracy is caught, not
+just one that lowers overall F1.
+
+### D-IC-004 — Serving uses `model.predict()` / `model.classes_`, never `label_map.id2label`
+
+**Decision.** scikit-learn sorts string class labels, so Model A's
+`model.classes_` (and `predict_proba` column order) is **alphabetical**, which is
+NOT `label_map.json`'s `id2label` order. The serving contract (and the gate) use
+`predict()` for the label and `model.classes_[i]` to map a probability index.
+
+**Why.** Using `label_map.id2label[argmax(proba)]` would silently mislabel
+predictions. Documented in the model card and the intent spec's serving section so
+the later model-server integration does not reintroduce the bug.
+
+### D-IC-005 — Training notebooks excluded from ruff
+
+**Decision.** `[tool.ruff] extend-exclude = ["*.ipynb"]`. Generators and gates in
+`scripts/`/`tests/` are still fully linted and type-checked.
+
+**Why.** Colab training notebooks legitimately carry exploratory patterns (display
+imports, cell-scoped names) that production lint rules flag as noise. They are not
+deployed code; the artifacts they produce are gated instead.

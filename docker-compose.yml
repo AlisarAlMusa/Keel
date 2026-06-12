@@ -224,6 +224,7 @@ services:
       dockerfile: Dockerfile
     environment:
       GRAD_RISK_ARTIFACTS_DIR: /app/ml/grad_risk/artifacts
+      INTENT_ARTIFACTS_DIR: /app/ml/intent/artifacts
     ports:
       - "9000:9000"
     volumes:

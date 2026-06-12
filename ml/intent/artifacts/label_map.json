@@ -1,0 +1,53 @@
+{
+  "labels": [
+    "plan",
+    "whatif",
+    "advise",
+    "audit",
+    "predict",
+    "register",
+    "waitlist",
+    "plans_manage",
+    "grad_apply",
+    "major_change",
+    "petition",
+    "escalate",
+    "out_of_scope",
+    "my_info",
+    "chitchat"
+  ],
+  "label2id": {
+    "plan": 0,
+    "whatif": 1,
+    "advise": 2,
+    "audit": 3,
+    "predict": 4,
+    "register": 5,
+    "waitlist": 6,
+    "plans_manage": 7,
+    "grad_apply": 8,
+    "major_change": 9,
+    "petition": 10,
+    "escalate": 11,
+    "out_of_scope": 12,
+    "my_info": 13,
+    "chitchat": 14
+  },
+  "id2label": {
+    "0": "plan",
+    "1": "whatif",
+    "2": "advise",
+    "3": "audit",
+    "4": "predict",
+    "5": "register",
+    "6": "waitlist",
+    "7": "plans_manage",
+    "8": "grad_apply",
+    "9": "major_change",
+    "10": "petition",
+    "11": "escalate",
+    "12": "out_of_scope",
+    "13": "my_info",
+    "14": "chitchat"
+  }
+}

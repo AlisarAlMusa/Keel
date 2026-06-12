@@ -33,6 +33,11 @@ jobs:
       - name: Unit tests (backend)
         run: uv run pytest tests/unit -q
 
+      # Model eval gates (intent classifier + grad-risk). Run against the
+      # committed artifacts in ml/ — hermetic, no MLflow access needed.
+      - name: Eval gates (intent · grad-risk)
+        run: uv run pytest tests/eval -q
+
       # --- Model-server package (isolated) ---
       - name: Sync model-server
         working-directory: model-server

@@ -1,0 +1,24 @@
+{
+  "fallback_threshold": 0.5115384615384615,
+  "target_accuracy": 0.9,
+  "winner_model": "A",
+  "n_labels": 15,
+  "labels": [
+    "plan",
+    "whatif",
+    "advise",
+    "audit",
+    "predict",
+    "register",
+    "waitlist",
+    "plans_manage",
+    "grad_apply",
+    "major_change",
+    "petition",
+    "escalate",
+    "out_of_scope",
+    "my_info",
+    "chitchat"
+  ],
+  "note": "The registered model returns the full 15-class probability vector. This threshold is a routing policy read by the router at startup. Change it here without re-training or re-registering the model."
+}

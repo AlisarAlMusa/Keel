@@ -1,0 +1,10 @@
+{
+  "winner": "A",
+  "macro_f1": 0.8034,
+  "accuracy": 0.8057,
+  "latency_ms_mean": 8.08,
+  "cost_usd_per_inference": 0.0,
+  "rec_threshold": 0.5115384615384615,
+  "n_train": 875,
+  "n_test": 175
+}
