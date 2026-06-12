@@ -48,6 +48,8 @@ packages = ["src/keel"]
 line-length = 100
 target-version = "py312"
 src = ["src", "tests", "scripts", "migrations"]
+# Training notebooks are exploratory (Colab) — not linted as production code.
+extend-exclude = ["*.ipynb"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]

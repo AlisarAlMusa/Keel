@@ -61,9 +61,11 @@ def model():
     _skip_if_no_artifact()
     if ONNX_PATH.exists():
         import onnxruntime as ort
+
         sess = ort.InferenceSession(str(ONNX_PATH), providers=["CPUExecutionProvider"])
         return sess
     import joblib
+
     return joblib.load(JOBLIB_PATH)
 
 
@@ -71,6 +73,7 @@ def model():
 def feature_schema():
     _skip_if_no_artifact()
     import json
+
     with open(SCHEMA_PATH) as f:
         return json.load(f)
 
@@ -79,6 +82,7 @@ def feature_schema():
 def test_data():
     _skip_if_no_artifact()
     import pandas as pd
+
     return pd.read_csv(TEST_CSV)
 
 
@@ -86,6 +90,7 @@ def test_data():
 def edge_data():
     _skip_if_no_artifact()
     import pandas as pd
+
     return pd.read_csv(EDGE_CSV)
 
 

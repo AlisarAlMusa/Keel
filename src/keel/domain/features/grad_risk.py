@@ -94,12 +94,8 @@ def compute_features(raw: RawFeatureInputs) -> dict[str, float]:
 
     # ── plan features ──────────────────────────────────────────────────────
     planned_credits = sum(c for c, _ in raw.plan_courses)
-    planned_workload_index = float(
-        sum(c * d for c, d in raw.plan_courses)
-    )
-    num_hard_courses = sum(
-        1 for _, d in raw.plan_courses if d >= HARD_DIFFICULTY_THRESHOLD
-    )
+    planned_workload_index = float(sum(c * d for c, d in raw.plan_courses))
+    num_hard_courses = sum(1 for _, d in raw.plan_courses if d >= HARD_DIFFICULTY_THRESHOLD)
 
     return {
         "cumulative_gpa": float(raw.cumulative_gpa),

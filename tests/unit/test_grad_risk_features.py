@@ -35,6 +35,7 @@ def _raw(**overrides):  # type: ignore[no-untyped-def]
 
 # ── gpa_trend ──────────────────────────────────────────────────────────────
 
+
 def test_gpa_trend_falling():
     raw = _raw(cumulative_gpa=3.5, recent_term_gpas=[3.0, 2.8])
     feats = compute_features(raw)
@@ -66,6 +67,7 @@ def test_gpa_trend_uses_only_trend_window():
 
 # ── progress_rate ──────────────────────────────────────────────────────────
 
+
 def test_progress_rate_normal():
     # completed=45, terms=3, expected=15 → 45/(3*15)=1.0
     raw = _raw(completed_credits=45.0, terms_elapsed=3)
@@ -89,6 +91,7 @@ def test_progress_rate_zero_terms_no_crash():
 
 # ── pct_complete ───────────────────────────────────────────────────────────
 
+
 def test_pct_complete_partial():
     raw = _raw(completed_credits=60.0, required_credits=120.0)
     feats = compute_features(raw)
@@ -110,6 +113,7 @@ def test_pct_complete_zero_required_no_crash():
 
 
 # ── plan features ──────────────────────────────────────────────────────────
+
 
 def test_planned_credits_sum():
     raw = _raw(plan_courses=[(3, 2), (4, 5), (3, 1)])
@@ -141,6 +145,7 @@ def test_empty_plan_courses():
 
 # ── to_vector ──────────────────────────────────────────────────────────────
 
+
 def test_to_vector_order_and_length():
     raw = _raw()
     feats = compute_features(raw)
@@ -157,6 +162,7 @@ def test_to_vector_dtype():
 
 # ── FEATURE_ORDER completeness ─────────────────────────────────────────────
 
+
 def test_feature_order_length():
     assert len(FEATURE_ORDER) == 9
 
@@ -167,6 +173,7 @@ def test_compute_features_returns_all_keys():
 
 
 # ── Constants sanity ───────────────────────────────────────────────────────
+
 
 def test_constants():
     assert EXPECTED_CREDITS_PER_TERM == 15

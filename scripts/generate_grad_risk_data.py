@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import ast
 import csv
 import json
+from typing import Any
 
 import numpy as np
 
@@ -32,6 +33,7 @@ from keel.domain.features.grad_risk import (
     RawFeatureInputs,
     compute_features,
 )
+
 
 # ── Seed catalog (extracted from seed.py — no DB or module import needed) ──
 # We parse the _COURSES list with ast so we get the same credits+difficulty
@@ -47,9 +49,10 @@ def _load_catalog() -> list[tuple[int, int]]:
             and node.target.id == "_COURSES"
             and node.value is not None
         ):
-            courses: list[dict] = ast.literal_eval(node.value)
+            courses: list[dict[str, Any]] = ast.literal_eval(node.value)
             return [(int(c["credits"]), int(c["difficulty"])) for c in courses]
     raise RuntimeError("_COURSES not found in seed.py")
+
 
 CATALOG: list[tuple[int, int]] = _load_catalog()
 
@@ -76,11 +79,13 @@ W = {
 
 
 def _softplus(x: np.ndarray) -> np.ndarray:
-    return np.log1p(np.exp(np.clip(x, -30, 30)))
+    out: np.ndarray = np.log1p(np.exp(np.clip(x, -30, 30)))
+    return out
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -30, 30)))
+    out: np.ndarray = 1.0 / (1.0 + np.exp(-np.clip(x, -30, 30)))
+    return out
 
 
 def _sample_plan(
@@ -95,7 +100,6 @@ def _sample_plan(
     if not CATALOG:
         return []
 
-    credits_arr = np.array([c for c, _ in CATALOG], dtype=float)
     diff_arr = np.array([d for _, d in CATALOG], dtype=float)
 
     # Weight harder courses more when overloading
@@ -117,7 +121,7 @@ def _sample_plan(
     return chosen if chosen else [(3, 2)]
 
 
-def _generate_rows(rng: np.random.Generator, n: int) -> list[dict]:
+def _generate_rows(rng: np.random.Generator, n: int) -> list[dict[str, Any]]:
     # ── Latent variables ──────────────────────────────────────────────────
     ability = rng.standard_normal(n)
     momentum = rng.standard_normal(n)
@@ -165,7 +169,9 @@ def _generate_rows(rng: np.random.Generator, n: int) -> list[dict]:
     return rows
 
 
-def _compute_labels(rows: list[dict], intercept: float, rng: np.random.Generator) -> np.ndarray:
+def _compute_labels(
+    rows: list[dict[str, Any]], intercept: float, rng: np.random.Generator
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Apply the risk function and sample binary labels."""
     mat = np.array([[r[f] for f in FEATURE_ORDER] for r in rows])
 
@@ -199,7 +205,7 @@ def _compute_labels(rows: list[dict], intercept: float, rng: np.random.Generator
     return rng.binomial(1, p).astype(int), mu, sigma
 
 
-def _binary_search_intercept(rows: list[dict], rng: np.random.Generator) -> float:
+def _binary_search_intercept(rows: list[dict[str, Any]], rng: np.random.Generator) -> float:
     """Find intercept so at-risk rate is 23–27%."""
     target_lo, target_hi = 0.23, 0.27
     lo, hi = -10.0, 5.0
@@ -216,7 +222,7 @@ def _binary_search_intercept(rows: list[dict], rng: np.random.Generator) -> floa
     return mid
 
 
-def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
+def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
@@ -224,9 +230,9 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
         w.writerows(rows)
 
 
-def _golden_edge_rows() -> list[dict]:
+def _golden_edge_rows() -> list[dict[str, Any]]:
     """Hand-constructed obvious at-risk and on-track cases."""
-    cases = []
+    cases: list[dict[str, Any]] = []
 
     # ── Clear at-risk: failing GPA, many failures, heavy overloaded plan ──
     for i in range(12):
@@ -240,10 +246,10 @@ def _golden_edge_rows() -> list[dict]:
             terms_elapsed=4,
             plan_courses=[(4, 5), (4, 5), (3, 4), (3, 4)],
         )
-        feats = compute_features(raw)
-        feats["at_risk"] = 1
-        feats["row_id"] = f"edge_risk_{i:02d}"
-        cases.append(feats)
+        row: dict[str, Any] = dict(compute_features(raw))
+        row["at_risk"] = 1
+        row["row_id"] = f"edge_risk_{i:02d}"
+        cases.append(row)
 
     # ── Clear on-track: strong GPA, no failures, light plan ───────────────
     for i in range(12):
@@ -257,10 +263,10 @@ def _golden_edge_rows() -> list[dict]:
             terms_elapsed=6,
             plan_courses=[(3, 2), (3, 2), (3, 1)],
         )
-        feats = compute_features(raw)
-        feats["at_risk"] = 0
-        feats["row_id"] = f"edge_ok_{i:02d}"
-        cases.append(feats)
+        row = dict(compute_features(raw))
+        row["at_risk"] = 0
+        row["row_id"] = f"edge_ok_{i:02d}"
+        cases.append(row)
 
     return cases
 
@@ -281,15 +287,12 @@ def main() -> None:
     print(f"Intercept   : {intercept:.4f}")
     print(f"At-risk rate: {at_risk_rate:.3f}  ({labels.sum()} / {len(labels)})")
     assert 0.23 <= at_risk_rate <= 0.27, (
-        f"At-risk rate {at_risk_rate:.3f} outside 23–27% target. "
-        "Adjust the binary search bounds."
+        f"At-risk rate {at_risk_rate:.3f} outside 23–27% target. Adjust the binary search bounds."
     )
 
     # ── Full dataset ──────────────────────────────────────────────────────
     fieldnames = ["row_id"] + FEATURE_ORDER + ["at_risk"]
-    full_rows = [
-        {"row_id": i, **r, "at_risk": int(labels[i])} for i, r in enumerate(rows)
-    ]
+    full_rows = [{"row_id": i, **r, "at_risk": int(labels[i])} for i, r in enumerate(rows)]
     out_full = data_dir / "grad_risk.csv"
     _write_csv(out_full, fieldnames, full_rows)
     print(f"Written: {out_full}  ({len(full_rows)} rows)")
@@ -299,8 +302,8 @@ def main() -> None:
 
     print("\nFeature means by class:")
     for feat in FEATURE_ORDER:
-        vals_risk = [r[feat] for r, lbl in zip(rows, labels) if lbl == 1]
-        vals_ok = [r[feat] for r, lbl in zip(rows, labels) if lbl == 0]
+        vals_risk = [r[feat] for r, lbl in zip(rows, labels, strict=True) if lbl == 1]
+        vals_ok = [r[feat] for r, lbl in zip(rows, labels, strict=True) if lbl == 0]
         print(
             f"  {feat:<26}  at-risk={statistics.mean(vals_risk):.3f}"
             f"  on-track={statistics.mean(vals_ok):.3f}"
