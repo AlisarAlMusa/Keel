@@ -1,0 +1,54 @@
+{
+  "intercept": -2.96875,
+  "weights": {
+    "intercept": 0.0,
+    "cumulative_gpa": -1.2,
+    "gpa_trend": -0.8,
+    "num_failures": 1.0,
+    "num_repeats": 0.5,
+    "progress_rate": -0.9,
+    "pct_complete": -0.3,
+    "planned_credits": 0.4,
+    "planned_workload_index": 0.7,
+    "num_hard_courses": 0.5,
+    "interaction": 0.6
+  },
+  "at_risk_rate": 0.2485,
+  "n_rows": 4000,
+  "seed": 42,
+  "feature_order": [
+    "cumulative_gpa",
+    "gpa_trend",
+    "num_failures",
+    "num_repeats",
+    "progress_rate",
+    "pct_complete",
+    "planned_credits",
+    "planned_workload_index",
+    "num_hard_courses"
+  ],
+  "standardization": {
+    "mu": [
+      2.596019,
+      -0.0017,
+      1.2855,
+      0.7625,
+      0.762102,
+      0.428502,
+      14.19325,
+      52.2685,
+      2.4575
+    ],
+    "sigma": [
+      0.562959,
+      0.417599,
+      1.274359,
+      0.950312,
+      0.211685,
+      0.233047,
+      3.117035,
+      16.043376,
+      1.362972
+    ]
+  }
+}
