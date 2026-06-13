@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="forbid",
+        # "ignore" rather than "forbid": .env is shared between pydantic-settings
+        # (app config) and docker-compose (POSTGRES_USER, MINIO_ROOT_*, etc.).
+        # Separating the two files is future work; forbid would reject all infra vars.
+        extra="ignore",
         case_sensitive=False,
     )
 
