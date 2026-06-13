@@ -1,0 +1,24 @@
+{
+  "feature_order": [
+    "cumulative_gpa",
+    "gpa_trend",
+    "num_failures",
+    "num_repeats",
+    "progress_rate",
+    "pct_complete",
+    "planned_credits",
+    "planned_workload_index",
+    "num_hard_courses"
+  ],
+  "n_features": 9,
+  "constants": {
+    "EXPECTED_CREDITS_PER_TERM": 15,
+    "TREND_WINDOW": 2,
+    "HARD_DIFFICULTY_THRESHOLD": 4
+  },
+  "target": "at_risk",
+  "labels": {
+    "0": "on_track",
+    "1": "at_risk"
+  }
+}

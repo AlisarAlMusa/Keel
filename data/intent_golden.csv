@@ -1,0 +1,31 @@
+text,label
+put together a course schedule for me for next term,plan
+help me work out which classes to take in the spring,plan
+what happens to my graduation timeline if i drop a course,whatif
+"suppose i added one more class this term, how does that look",whatif
+in your opinion is the algorithms course tough,advise
+which of the electives would you say is the most manageable,advise
+what coursework do i still have outstanding before i can graduate,audit
+how many degree credits am i still short by,audit
+what are the odds i actually graduate on schedule,predict
+am i in danger of not completing my degree in time,predict
+go ahead and enroll me into the databases course,register
+process my enrollment for the linear algebra class,register
+add my name to the waiting list for operating systems,waitlist
+i'd like to join the waiting list for that section since it filled up,waitlist
+save this schedule into my list of saved plans,plans_manage
+pull up every plan i have saved so far,plans_manage
+i would like to file my application to graduate,grad_apply
+go ahead and submit my paperwork for degree conferral,grad_apply
+make it official and change my declared major to computer science,major_change
+i have decided — record my major as economics now,major_change
+i want to request an exception to skip a course prerequisite,petition
+file a formal request for me to exceed the credit limit this term,petition
+please put me in touch with a human academic advisor,escalate
+i would rather have an actual staff member handle this,escalate
+go ahead and write my term paper for my history class,out_of_scope
+tell me whether it is going to rain this weekend,out_of_scope
+remind me what my current grade point average is,my_info
+check whether there are any holds sitting on my account,my_info
+"hey there, how is your day going",chitchat
+"thanks a ton, you have been super helpful",chitchat

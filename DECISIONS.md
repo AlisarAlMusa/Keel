@@ -109,6 +109,34 @@ backend + MinIO artifact store described in `ARCH.md`.
 **Rejected (for now).** Postgres + MinIO-backed MLflow — deferred to the phase
 that actually logs runs, to avoid image-dependency fragility in the foundation.
 
+### D-007b — MLflow upgraded to Postgres + MinIO in Phase 1; artifacts proxy-served
+
+**Decision.** At Phase 1 (when model training begins), MLflow is upgraded from
+the Phase 0 SQLite/volume config to: Postgres as the backend store (metadata +
+model registry) and MinIO as the artifact store. MLflow is started with
+`--serve-artifacts`, which proxies artifact uploads through the tracking server's
+HTTP API rather than requiring clients to write directly to S3.
+
+**Rationale.** Training runs from Colab (remote) — a Colab notebook cannot reach a
+Docker-internal volume or `http://minio:9000`. With `--serve-artifacts`, Colab
+only needs to reach the tracking server (tunneled via ngrok/cloudflared to
+`localhost:5001`); it uploads artifacts over HTTP to MLflow, which forwards them
+to MinIO. No S3 credentials needed in Colab. This also means the model registry
+and all run artifacts survive container restarts (Postgres + MinIO are both
+durable volumes).
+
+**Implementation.** Custom `Dockerfile.mlflow` adds `psycopg2-binary` + `boto3`
+to the slim base image. `minio-init` one-shot container creates both
+`keel-artifacts` and `keel-mlflow` buckets on first boot. `db-init.sh` creates
+a separate `mlflow` database in Postgres via `\gexec` (idempotent, works outside
+a transaction). This is the "Backed by MinIO + Postgres" state described in
+`ARCH.md §6`.
+
+**Rejected.** Direct S3 client in Colab — requires exposing MinIO credentials
+and MinIO port to the tunnel, adds credential management in Colab. SQLite/volume
+retained beyond Phase 0 — remote clients cannot write to a local volume; only
+works if training is always local.
+
 ### D-008 — LangGraph/LangChain not installed in Phase 0
 
 **Decision.** Agent dependencies (LangGraph/LangChain) are deferred to Phase 2,
@@ -116,3 +144,220 @@ when the bounded agent is built — they are not in the Phase 0 backend lockfile
 
 **Rationale.** Keep the foundation image lean; install heavy agent deps the day
 the agent lands. The `agent/` package is scaffolded empty so the code has a home.
+
+## Phase 1 - Classifier models and engine logic
+
+### The Intent Classifier & Router — Design Narrative
+
+**What it is.** A small trained text-classification model (trained model #1 of 2) that reads every incoming student message and returns one label plus a confidence score. The label maps directly to exactly one handler in the backend. It is the front door of the whole system.
+
+**The problem it solves.** Most chat traffic is simple: lookups, status checks, plan management, fully-specified actions. Sending every message to an LLM agent would be slow, expensive, and unnecessary. The router exists to keep the LLM off cheap, enumerable decisions — and to keep the LLM's flexibility reserved for the turns that genuinely need it.
+
+**The routing rule (3 lines).**
+
+1. If the session has a pending approval or an active flow → the deterministic state machine handles the turn (no classifier, no LLM).
+2. Else if classifier confidence ≥ threshold → run the single handler mapped to that label, directly.
+3. Else (low confidence, ambiguous, or multi-intent) → send to the bounded LLM agent, which picks among the same handlers as tools.
+
+**The labels (13).** `plan`, `whatif`, `advise`, `audit`, `predict`, `register`, `waitlist`, `plans_manage`, `grad_apply`, `major_change`, `petition`, `escalate`, `out_of_scope`. One label = one handler. We renamed "register" thinking into a richer set: action-type requests get their own labels because they have distinctive vocabulary ("waitlist", "graduation", "petition", "switch my major"), so a small classifier separates them reliably.
+
+**Key decision 1 — handlers are fixed pipelines, not agent improvisation.** Workflows whose steps always run in the same order (plan → eligible pool → propose → verify → repair → predict risk → explain) are written as code: composite tools. The LLM works *inside* specific steps (extract constraints, propose candidates, explain results) but never decides the order. Reason: a fixed order paid to an LLM on every request is wasted cost and a reliability risk; code is testable once and correct forever.
+
+**Key decision 2 — the agent is the fallback, not the main path.** It handles three cases only: low-confidence turns, multi-intent turns ("plan my semester and register me"), and conversational repair ("no, make it lighter"). Its tools are the same composite pipelines used by direct routing — built once, shared, no duplicated logic. It is bounded: tool allowlist, loop cap, Pydantic-validated inputs.
+
+**Why 13 labels doesn't hurt accuracy.** The classes are lexically distinct, and the design absorbs mistakes: confusable or mixed messages naturally produce low confidence and fall to the agent, which resolves them. A misroute is never dangerous, because every action still passes the deterministic engine check and the human approval gate before any write. The classifier proposes a route; deterministic systems and approval still protect every outcome — the project's core principle applied to routing itself.
+
+**Training & evaluation.** Three-way comparison: classical ML (TF-IDF + logistic regression/GBM) vs small DL model (DistilBERT-class, exported to ONNX) vs LLM zero-shot baseline. Dataset: hand-written seed examples LLM-augmented to ~50–80 per class, deduplicated, stratified held-out split, no leakage. Macro-F1 gates CI; the confusion matrix and the confidence-threshold choice are committed with the eval report. Served from the lean model-server (no torch), milliseconds per call.
+
+**What this buys the project.** Cheap turns cost ~0 tokens; routing is observable and testable; the attack surface shrinks (out_of_scope filters junk before any LLM sees it); and the capstone gets a genuinely justified trained model — not a model added for show, but one whose absence would make every message more expensive.
+
+
+### Router label set expanded to 15 (added `my_info`, `chitchat`)
+Real traffic includes turns that fit no feature module but that we can answer
+from our own tables ("what time is my class?", "show my grades") and pure
+small talk ("hello", "thanks"). Added:
+- `my_info` → deterministic DB lookup over the student's own enrollments,
+  sections, and transcript + template response. No RAG (structured data lives
+  in tables, not prose), no LLM. Zero token cost.
+- `chitchat` → canned friendly template + one-line capability hint. No LLM.
+Both keep cheap, high-frequency turns off the LLM entirely — the router's
+reason to exist. Unknown/unanswerable turns still fall to `advise`-with-empty-
+retrieval ("I couldn't find this — want an advisor?") or `out_of_scope`.
+
+### Approval state moved to Postgres; Redis keeps only session memory
+Pending approval actions are safety-critical state (loss → lost write;
+replay → double write). They live in a `pending_actions` table
+(payload, status, expires_at, idempotency_key); the approval endpoint reads
+this row, so approvals survive a Redis restart. Redis holds only ephemeral
+conversation context with TTL, where loss is harmless. Persistent where
+correctness matters; cache where convenience matters.
+
+## Phase 1 — Graduation-Risk Classifier
+
+### D-GR-001 — LR / RF / HistGB instead of ML / DL / LLM
+
+**Decision.** Three-family comparison: Logistic Regression (linear), Random
+Forest (bagging), HistGradientBoosting (boosting). No deep-learning model, no
+LLM baseline.
+
+**Why.** This is a tabular dataset with 9 numeric features and ~4 000 rows. DL
+models (transformers, MLPs) offer no structural advantage over tree ensembles at
+this size and feature type. The ML/DL/LLM comparison lesson was already
+demonstrated in the intent classifier, which has text inputs. Comparing three
+model families that differ in their inductive bias (linear separability, random
+bagging variance reduction, sequential boosting bias reduction) is the correct
+bake-off for tabular data.
+
+### D-GR-002 — Representative imbalance + class_weight instead of SMOTE or 50/50 generation
+
+**Decision.** Dataset is generated at ~25% at-risk rate (realistic minority).
+Balance is handled at training time via `class_weight='balanced'` for LR/RF and
+`compute_sample_weight('balanced', y_train)` for HistGB.
+
+**Why.** A 50/50 synthetic set fails the "is your base rate realistic?" question
+— it misrepresents the actual prevalence of at-risk students. At a 25% minority
+rate, class weighting is mathematically sufficient: it reweights the loss
+function identically to what SMOTE aims to achieve but without generating
+synthetic samples that could introduce distributional artifacts. SMOTE also
+requires the `imbalanced-learn` dependency, which is not installed anywhere in
+this project and would add a non-trivial transitive dependency surface.
+
+### D-GR-003 — Risk-function weights and required interaction term
+
+**Decision.** Labels are generated by a logistic risk function applied to
+z-scored features, with a mandatory nonlinear interaction term:
+`0.6 × relu(-z_gpa) × relu(z_workload)`. The intercept is binary-searched to
+achieve a 23–27% at-risk rate.
+
+**Exact weights (copy into DATA.md):**
+```
+cumulative_gpa:         -1.2
+gpa_trend:              -0.8
+num_failures:           +1.0
+num_repeats:            +0.5
+progress_rate:          -0.9
+pct_complete:           -0.3
+planned_credits:        +0.4
+planned_workload_index: +0.7
+num_hard_courses:       +0.5
+interaction:            +0.6  (relu(-z_gpa) × relu(z_workload))
+intercept:              ~-2.97 (binary-searched; see grad_risk_meta.json)
+```
+
+**Why the interaction is required.** Without it, the risk surface is a
+hyperplane in z-space, meaning Logistic Regression can fit it perfectly (macro-F1
+→ 1.0 after standardisation). This would make the comparison between model
+families meaningless. The interaction term adds curvature that LR cannot capture,
+ensuring the comparison between linear / bagging / boosting models is genuine and
+the trivial-guard (`macro_f1 < 0.97`) is meaningful.
+
+### D-GR-004 — Tuning strategy: RandomizedSearchCV, 5-fold stratified CV, scoring=f1_macro
+
+**Decision.** `RandomizedSearchCV` with `StratifiedKFold(n_splits=5)` and
+`scoring='f1_macro'`. 12 iterations per family. Refit=True so the best estimator
+is evaluated directly on the test set.
+
+**Why RandomizedSearch over GridSearch.** The search spaces for RF and HistGB are
+continuous or large-discrete; a full grid would be prohibitively slow in Colab.
+RandomizedSearch with 12 iterations finds good hyperparameters in a fraction of
+the time with minimal loss in solution quality for this problem size.
+
+**Why f1_macro as CV scoring.** Consistent with the test metric and the CI gate.
+Using accuracy would bias CV toward majority-class performance; f1_macro weights
+both classes equally in CV, matching the goal of catching at-risk students.
+
+### D-GR-005 — Winner selection rule and ONNX handling
+
+**Decision.** Winner = highest `macro_f1` on the test set; tie-break =
+`at_risk_recall`. ONNX export is attempted via `skl2onnx`; if it fails for HistGB
+(known conversion gaps for some Pipeline configurations), `grad_risk.joblib` is
+the served file and ONNX is skipped. The model card and eval report record which
+file is served and its SHA-256.
+
+**Why joblib as safe path.** `skl2onnx` supports all three model families but has
+occasional issues with newer sklearn versions or custom transformers. Serving
+joblib via the model-server's Python runtime is fully equivalent in this context
+(the model-server already runs Python). The SHA-256 boot check applies to
+whichever file is served; swapping to ONNX after the fact requires only
+re-pinning the hash, not re-training.
+## Phase 1 — Classifier Artifact Sync + CI Gates (both models)
+
+### D-IC-001 — One generalized MLflow pull script, not one per model
+
+**Decision.** `scripts/pull_model_artifacts.py` carries a `MODELS` registry and
+loops over every Keel model (`keel-grad-risk` → `ml/grad_risk/`,
+`keel-intent-router` → `ml/intent/`), resolving each at alias `production` and
+downloading its whole `artifacts/` directory. One docker-compose
+`model-artifacts-sync` service syncs both.
+
+**Why.** The resolve→download→validate logic is identical per model; a second
+script would duplicate it and drift. A declarative list keeps the boot-time sync
+to a single container and makes adding a future model a one-entry change. Each
+model declares its own *required* vs *optional* artifacts, so a winner that omits
+a file (e.g. intent Model A has no `model_b.onnx`) is handled gracefully.
+
+### D-IC-002 — Intent test set is index-based, not a standalone CSV
+
+**Decision.** The intent CI gate reconstructs its 175-row test set from
+`data/intent_dataset.csv` + `data/intent-split.json["test"]`. There is no
+materialized `intent_test.csv` (unlike grad-risk's `grad_risk_test.csv`).
+
+**Why.** The intent split was always stored as row indices grouped by
+`seed_group_id` (the leakage guarantee lives in the index assignment). Both source
+files are committed, so the reconstruction is deterministic and hermetic in CI. A
+separate CSV would duplicate data already present and risk drift on regeneration.
+
+### D-IC-003 — Intent gate enforces macro-F1 AND routing coverage
+
+**Decision.** `tests/eval/test_intent_gate.py` asserts (1) macro-F1 ≥ 0.75
+(actual 0.8034), (2) accuracy-on-covered ≥ 0.87 at the `router_config.json`
+threshold (actual 0.926 at 0.5115), (3) `label_map` order == generator `LABELS`,
+(4) `model.classes_` cover exactly the 15 labels, (5) a trivial guard.
+
+**Why.** macro-F1 alone does not protect the *routing policy* that actually ships
+— the threshold decides direct-handler vs agent. Gating accuracy-on-covered
+ensures a model regression that quietly lowers covered accuracy is caught, not
+just one that lowers overall F1.
+
+### D-IC-006 — Intent golden set (held-out obvious cases, 100% gate)
+
+**Decision.** `data/intent_golden.csv` — 30 hand-written, unambiguous messages
+(2 per label) the production router MUST classify correctly. Written by the
+generator from a `GOLDEN` dict, held out of training, with a build-time guard
+that fails if any golden line is a near-duplicate (Jaccard ≥ 0.92) of a training
+row. CI gate: `golden_accuracy_min: 1.0`. The intent analogue of
+`grad_risk_golden_edge.csv`.
+
+**Why.** The test-split macro-F1 (0.80) tolerates errors on hard/ambiguous
+phrasings — correctly, since those fall to the agent. But the router must never
+fail an *obvious* turn ("apply for graduation", "what's my gpa"). A 100% gate on
+held-out canonical cases catches a regression that breaks the easy path even if
+aggregate F1 looks fine. The near-dup guard keeps the set a real generalization
+check, not memorization. Two initial drafts were reworded after the model missed
+them — confirming the set is genuinely held-out and the gate has teeth.
+
+**Note.** Fixed a latent path bug found while adding this: the generator used
+`parents[2]` (correct when it lived in `training/intent/`) but had moved to
+`scripts/`, so it was writing outputs to `<repo>/../data/` — outside the repo.
+Corrected to `parents[1]`; regenerated `intent_dataset.csv` / `intent-split.json`
+are byte-identical to the committed (model-trained) versions.
+
+### D-IC-004 — Serving uses `model.predict()` / `model.classes_`, never `label_map.id2label`
+
+**Decision.** scikit-learn sorts string class labels, so Model A's
+`model.classes_` (and `predict_proba` column order) is **alphabetical**, which is
+NOT `label_map.json`'s `id2label` order. The serving contract (and the gate) use
+`predict()` for the label and `model.classes_[i]` to map a probability index.
+
+**Why.** Using `label_map.id2label[argmax(proba)]` would silently mislabel
+predictions. Documented in the model card and the intent spec's serving section so
+the later model-server integration does not reintroduce the bug.
+
+### D-IC-005 — Training notebooks excluded from ruff
+
+**Decision.** `[tool.ruff] extend-exclude = ["*.ipynb"]`. Generators and gates in
+`scripts/`/`tests/` are still fully linted and type-checked.
+
+**Why.** Colab training notebooks legitimately carry exploratory patterns (display
+imports, cell-scoped names) that production lint rules flag as noise. They are not
+deployed code; the artifacts they produce are gated instead.

@@ -42,7 +42,7 @@ The ordered build plan with acceptance criteria. Check items off as they land. `
 
 **Parallel (offline, Colab):**
 - [ ] 🟠 Train intent classifier (classical + DL→ONNX + LLM baseline), log to MLflow
-- [ ] 🟠 Train graduation-risk (same 3-way, class-imbalance handling), promote winner to MLflow staging
+- [ ] 🟠 Train graduation-risk (RF vs LR vs HistGradientBoosting, class-imbalance handling), promote winner to MLflow staging
 - [ ] 🟠 Export → ONNX/joblib, SHA-256 in model cards, push artifacts via MLflow→MinIO
 - [ ] MLflow tracking server up (compose), UI reachable
 

@@ -114,16 +114,51 @@ services:
           widget_token_secret=$KEEL_WIDGET_TOKEN_SECRET
     networks: [keel]
 
+  # One-shot: create the MinIO buckets MLflow + the app need, then exit.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MLFLOW_BUCKET: ${MLFLOW_BUCKET}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD &&
+        mc mb --ignore-existing local/$MINIO_BUCKET &&
+        mc mb --ignore-existing local/$MLFLOW_BUCKET
+    networks: [keel]
+
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.17.2
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
+    # Backend store = Postgres (metadata + model registry).
+    # Artifacts = MinIO via S3; --serve-artifacts proxies uploads through this
+    # server, so remote clients (e.g. Colab) need no MinIO credentials.
     command: >
       mlflow server --host 0.0.0.0 --port 5000
-      --backend-store-uri sqlite:////mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
+      --backend-store-uri postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/mlflow
+      --artifacts-destination s3://${MLFLOW_BUCKET}
+      --serve-artifacts
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: us-east-1
     ports:
       - "5001:5000"   # host 5001 (macOS AirPlay Receiver commonly holds 5000)
-    volumes:
-      - mlflow-data:/mlflow
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/health')\" || exit 1"]
       interval: 10s
@@ -163,18 +198,50 @@ services:
         condition: service_completed_successfully
     networks: [keel]
 
+  # One-shot: pull the current production model artifacts (grad-risk + intent)
+  # from MLflow into the shared model-artifacts volume, then exit. model-server
+  # waits for this. Hostnames are in-network (this container only runs inside the
+  # compose network) — host-facing ${MLFLOW_TRACKING_URI} (localhost:5001) is for
+  # running the pull script from the Mac, not here.
+  model-artifacts-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["python", "scripts/pull_model_artifacts.py", "--dest", "/app/ml", "--allow-missing"]
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - model-artifacts:/app/ml
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks: [keel]
+
   model-server:
     build:
       context: ./model-server
       dockerfile: Dockerfile
+    environment:
+      GRAD_RISK_ARTIFACTS_DIR: /app/ml/grad_risk/artifacts
+      INTENT_ARTIFACTS_DIR: /app/ml/intent/artifacts
     ports:
       - "9000:9000"
+    volumes:
+      - model-artifacts:/app/ml
+    depends_on:
+      model-artifacts-sync:
+        condition: service_completed_successfully
     networks: [keel]
 
 volumes:
   db-data:
   minio-data:
-  mlflow-data:
+  model-artifacts:
+  # MLflow no longer needs a volume — metadata lives in Postgres, artifacts in MinIO.
 
 networks:
   keel:

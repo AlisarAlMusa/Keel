@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     model_server_port: int = 9000
     log_level: str = "INFO"
+    grad_risk_artifacts_dir: str = "/app/ml/grad_risk/artifacts"
+    intent_artifacts_dir: str = "/app/ml/intent/artifacts"
 
 
 @lru_cache

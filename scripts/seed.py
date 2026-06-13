@@ -29,9 +29,9 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from keel.config import get_settings
-from keel.infra import db as db_infra
+from keel.infra import database as db_infra
 from keel.infra import storage as storage_infra
-from keel.infra.orm import (
+from keel.infra.database.models import (
     Corequisite,
     Course,
     Prerequisite,

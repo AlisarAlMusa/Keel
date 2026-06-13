@@ -14,4 +14,15 @@
 #   guardrails_redteam    # Phase 3 — 100% injection + cross-tenant refused; PII never leaks
 #   smoke                 # Phase 0 — stack up healthy (enforced in CI now)
 
-gates: {}
+gates:
+  intent:
+    macro_f1_min: 0.75              # actual 0.8034 − 0.05 headroom
+    covered_accuracy_min: 0.87      # actual 0.9262 at threshold − 0.05 headroom
+    macro_f1_trivial_guard_max: 0.99
+    golden_accuracy_min: 1.0        # obvious held-out cases must ALL be correct
+
+  grad_risk:
+    macro_f1_min: 0.77            # actual 0.8215 − 0.05 headroom
+    at_risk_recall_min: 0.68      # actual 0.7310 − 0.05 headroom
+    macro_f1_trivial_guard_max: 0.97
+    edge_case_accuracy_min: 1.0

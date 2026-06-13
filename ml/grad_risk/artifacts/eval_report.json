@@ -1,0 +1,62 @@
+{
+  "winner": "C-base",
+  "served_file": "grad_risk.onnx",
+  "served_sha256": "fda480982c284cd9928af32af970262459554a71b91175a104925d64cb137687",
+  "winner_metrics": {
+    "macro_f1": 0.8215,
+    "at_risk_recall": 0.731,
+    "on_track_recall": 0.9121,
+    "pr_auc": 0.8337,
+    "brier": 0.106
+  },
+  "all_models": {
+    "A-base": {
+      "macro_f1": 0.819,
+      "at_risk_recall": 0.7412,
+      "on_track_recall": 0.8969,
+      "pr_auc": 0.8495,
+      "brier": 0.1008
+    },
+    "B-base": {
+      "macro_f1": 0.8144,
+      "at_risk_recall": 0.7127,
+      "on_track_recall": 0.916,
+      "pr_auc": 0.8189,
+      "brier": 0.0923
+    },
+    "C-base": {
+      "macro_f1": 0.8215,
+      "at_risk_recall": 0.731,
+      "on_track_recall": 0.9121,
+      "pr_auc": 0.8337,
+      "brier": 0.106
+    },
+    "A-tuned": {
+      "macro_f1": 0.819,
+      "at_risk_recall": 0.7412,
+      "on_track_recall": 0.8969,
+      "pr_auc": 0.849,
+      "brier": 0.1003
+    },
+    "B-tuned": {
+      "macro_f1": 0.8183,
+      "at_risk_recall": 0.7299,
+      "on_track_recall": 0.9066,
+      "pr_auc": 0.8288,
+      "brier": 0.0937
+    },
+    "C-tuned": {
+      "macro_f1": 0.8067,
+      "at_risk_recall": 0.7207,
+      "on_track_recall": 0.8927,
+      "pr_auc": 0.8449,
+      "brier": 0.1015
+    }
+  },
+  "edge_case_accuracy": 1.0,
+  "n_train": 3200,
+  "n_test": 800,
+  "at_risk_rate_train": 0.2484,
+  "at_risk_rate_test": 0.2488,
+  "seed": 42
+}
