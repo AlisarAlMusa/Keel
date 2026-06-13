@@ -1,14 +1,14 @@
-"""US2 — configuration is typed and strict (FR-013).
+"""US2 — configuration is typed and validated (FR-013).
 
 - a valid environment loads
-- an unknown/typo'd key is rejected (``extra="forbid"``)
+- unknown/typo'd keys are silently ignored (``extra="ignore"`` — .env is shared
+  with docker-compose infra vars; forbid would reject POSTGRES_USER etc.)
 - types are coerced/validated
 """
 
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
 
 from keel.config import Settings
 
@@ -29,11 +29,12 @@ def test_valid_env_loads(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(settings.keel_api_port, int)
 
 
-def test_unknown_key_is_rejected() -> None:
-    # extra="forbid" rejects undeclared inputs (e.g. a typo'd key from a dotenv
-    # or an explicit kwarg) rather than silently ignoring them.
-    with pytest.raises(ValidationError):
-        Settings(totally_unknown_key="x", _env_file=None)  # type: ignore[call-arg]
+def test_unknown_key_is_ignored() -> None:
+    # extra="ignore": unknown kwargs are silently dropped, not rejected.
+    # .env is shared with docker-compose infra vars (POSTGRES_USER, MINIO_ROOT_*,
+    # etc.) that are not Settings fields; forbid would reject them all.
+    settings = Settings(totally_unknown_key="x", _env_file=None)  # type: ignore[call-arg]
+    assert settings.keel_env == "local"
 
 
 def test_defaults_are_present_without_env() -> None:
