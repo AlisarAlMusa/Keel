@@ -83,6 +83,9 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Write CI .env
+        run: cp .env.example .env
+
       - name: Bring up the stack
         run: docker compose up -d --build
 
