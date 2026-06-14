@@ -30,3 +30,7 @@ class ExternalServiceError(KeelError):
 
 class ConfigurationError(KeelError):
     """Required configuration or a required secret is missing/invalid."""
+
+
+class CyclicCatalogError(KeelError):
+    """Prerequisite catalog contains a cycle — rejected at DAG load time, never at query time."""
