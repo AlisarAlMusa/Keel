@@ -145,6 +145,31 @@ when the bounded agent is built — they are not in the Phase 0 backend lockfile
 **Rationale.** Keep the foundation image lean; install heavy agent deps the day
 the agent lands. The `agent/` package is scaffolded empty so the code has a home.
 
+### D-009 — `extra="ignore"` in Settings instead of `extra="forbid"`
+
+**Decision.** `Settings.model_config` uses `extra="ignore"` rather than the
+`extra="forbid"` recommended by ENGINEERING_RULES §5.
+
+**Rationale.** The single `.env` file is shared between `pydantic-settings` (app
+config) and Docker Compose, which injects its own variables (`POSTGRES_USER`,
+`POSTGRES_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, etc.) into the
+same env at startup. `extra="forbid"` would reject every Compose-specific key
+and abort boot. Maintaining two separate files (`.env.app` + `.env.compose`)
+removes the problem correctly but adds operational friction for a solo dev
+environment where the shared file is the standard Compose convention.
+
+**Accepted trade-off.** A typo'd *app* config key silently uses the default
+instead of failing fast. Mitigated by: (1) all non-secret required fields have
+strict Pydantic types (wrong type → boot error), and (2) Vault provides a
+fail-closed gate for every secret value regardless of settings typos.
+
+**Revisit when.** The project adds a separate `.env.app` file loaded explicitly
+via `env_file=".env.app"` and CI validates the compose file references only
+non-app variables — then switch to `extra="forbid"`.
+
+**Rejected.** `extra="forbid"` now — breaks `docker compose up` without the
+two-file split, which is a Day-7 polish item, not a Day-1 blocker.
+
 ## Phase 1 - Classifier models and engine logic
 
 ### The Intent Classifier & Router — Design Narrative

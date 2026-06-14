@@ -18,6 +18,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from keel import __version__
 from keel.api.routers import health
@@ -47,7 +48,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = get_settings()
 
     # 1. Observability
-    configure_logging(service=settings.otel_service_name, level=settings.keel_log_level)
+    configure_logging(
+        service=settings.otel_service_name,
+        level=settings.keel_log_level,
+        log_file=settings.keel_log_file or None,
+    )
     tracing.configure_tracing(
         service_name=settings.otel_service_name,
         otlp_endpoint=settings.otel_exporter_otlp_endpoint or None,
@@ -93,6 +98,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Keel API", version=__version__, lifespan=lifespan)
+
+    settings = get_settings()
+    if settings.cors_allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_allowed_origins,
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "X-Tenant-Id", "X-Idempotency-Key"],
+        )
+
     app.include_router(health.router)
     tracing.instrument_fastapi(app)
     return app
