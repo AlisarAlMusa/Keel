@@ -13,7 +13,6 @@ correctly and never re-implements its formulas or constants.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from uuid import uuid4
 
 import numpy as np
@@ -73,18 +72,28 @@ class TestFeatureOrderGuard:
 
     def test_feature_order_names_match_spec(self):
         expected = [
-            "cumulative_gpa", "gpa_trend", "num_failures", "num_repeats",
-            "progress_rate", "pct_complete", "planned_credits",
-            "planned_workload_index", "num_hard_courses",
+            "cumulative_gpa",
+            "gpa_trend",
+            "num_failures",
+            "num_repeats",
+            "progress_rate",
+            "pct_complete",
+            "planned_credits",
+            "planned_workload_index",
+            "num_hard_courses",
         ]
         assert FEATURE_ORDER == expected
 
     def test_to_vector_follows_feature_order(self):
         raw = RawFeatureInputs(
-            cumulative_gpa=3.0, recent_term_gpas=[2.8, 3.2],
-            num_failures=1, num_repeats=0,
-            completed_credits=30.0, required_credits=120.0,
-            terms_elapsed=2, plan_courses=[(3, 4), (3, 5)],
+            cumulative_gpa=3.0,
+            recent_term_gpas=[2.8, 3.2],
+            num_failures=1,
+            num_repeats=0,
+            completed_credits=30.0,
+            required_credits=120.0,
+            terms_elapsed=2,
+            plan_courses=[(3, 4), (3, 5)],
         )
         features = compute_features(raw)
         vec = to_vector(features)
@@ -111,6 +120,7 @@ class TestConstantsNoLocalCopy:
         # different class; check it's the same import.
         from keel.domain.engine import risk_inputs as ri
         from keel.domain.features import grad_risk as gr
+
         assert ri.RawFeatureInputs is gr.RawFeatureInputs
         assert ri.compute_features is gr.compute_features
         assert ri.to_vector is gr.to_vector
@@ -157,9 +167,11 @@ class TestHandComputedExample:
         # If cumulative == that term, trend = 0
         raw = RawFeatureInputs(
             cumulative_gpa=3.5,
-            recent_term_gpas=[3.5],   # only 1 term
-            num_failures=0, num_repeats=0,
-            completed_credits=15.0, required_credits=120.0,
+            recent_term_gpas=[3.5],  # only 1 term
+            num_failures=0,
+            num_repeats=0,
+            completed_credits=15.0,
+            required_credits=120.0,
             terms_elapsed=1,
             plan_courses=[],
         )
@@ -170,8 +182,10 @@ class TestHandComputedExample:
         raw = RawFeatureInputs(
             cumulative_gpa=0.0,
             recent_term_gpas=[],
-            num_failures=0, num_repeats=0,
-            completed_credits=0.0, required_credits=120.0,
+            num_failures=0,
+            num_repeats=0,
+            completed_credits=0.0,
+            required_credits=120.0,
             terms_elapsed=0,
             plan_courses=[],
         )
@@ -189,9 +203,12 @@ class TestFeature8WorkloadParity:
         expected_idx = raw_workload_index(plan_courses)  # 12+15+12=39
 
         raw = RawFeatureInputs(
-            cumulative_gpa=3.0, recent_term_gpas=[3.0, 3.0],
-            num_failures=0, num_repeats=0,
-            completed_credits=30.0, required_credits=120.0,
+            cumulative_gpa=3.0,
+            recent_term_gpas=[3.0, 3.0],
+            num_failures=0,
+            num_repeats=0,
+            completed_credits=30.0,
+            required_credits=120.0,
             terms_elapsed=2,
             plan_courses=plan_courses,
         )

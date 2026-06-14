@@ -18,7 +18,6 @@ from typing import Literal
 
 from keel.domain.engine.contracts import (
     Plan,
-    PlanTerm,
     Violation,
     ViolationCode,
     ViolationScope,
@@ -78,12 +77,7 @@ def verify(
     """
     violations: list[Violation] = []
 
-    passed_codes: frozenset[str] = frozenset(
-        e.course_code for e in transcript if e.passed
-    )
-
-    # Repeats: courses taken more than once (already in transcript at all)
-    all_transcript_codes: frozenset[str] = frozenset(e.course_code for e in transcript)
+    passed_codes: frozenset[str] = frozenset(e.course_code for e in transcript if e.passed)
 
     # Build coreq map: course -> set of its corequisites
     coreq_map: dict[str, set[str]] = {}
@@ -163,9 +157,7 @@ def verify(
                                 "for": code,
                                 "reason": "same_term",
                             },
-                            message=(
-                                f"{code} requires {prereq}, but both are in the same term."
-                            ),
+                            message=(f"{code} requires {prereq}, but both are in the same term."),
                         )
                     )
 
@@ -202,9 +194,7 @@ def verify(
                         detail={
                             "course": code,
                             "placed_term": plan_term.term.value,
-                            "offered_terms": sorted(
-                                t.value for t in course.offered_terms
-                            ),
+                            "offered_terms": sorted(t.value for t in course.offered_terms),
                         },
                         message=(
                             f"{code} is not offered in {plan_term.term.value}. "
@@ -214,9 +204,7 @@ def verify(
                 )
 
         # --- CREDIT_CAP_EXCEEDED ----------------------------------------------
-        term_credits = sum(
-            catalog[c].credits for c in known_codes if c in catalog
-        )
+        term_credits = sum(catalog[c].credits for c in known_codes if c in catalog)
         if term_credits > credit_cap:
             violations.append(
                 Violation(
@@ -230,9 +218,7 @@ def verify(
                         "cap": credit_cap,
                         "excess": term_credits - credit_cap,
                     },
-                    message=(
-                        f"Term has {term_credits} credits; cap is {credit_cap}."
-                    ),
+                    message=(f"Term has {term_credits} credits; cap is {credit_cap}."),
                 )
             )
 
@@ -241,11 +227,7 @@ def verify(
 
         # ── Section-scope checks ───────────────────────────────────────────────
         if scope == "section" and sections_by_code:
-            term_sections = [
-                sections_by_code[c]
-                for c in known_codes
-                if c in sections_by_code
-            ]
+            term_sections = [sections_by_code[c] for c in known_codes if c in sections_by_code]
 
             # --- CAPACITY_FULL ------------------------------------------------
             for section in term_sections:

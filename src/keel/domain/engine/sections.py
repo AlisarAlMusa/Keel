@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from itertools import product
 
-from keel.domain.models import Section, TimeSlot
+from keel.domain.models import Section
 
 
 def _slots_conflict(a: Section, b: Section) -> bool:
@@ -71,6 +71,6 @@ def find_conflict_free_combinations(
             if conflict:
                 break
         if not conflict:
-            results.append(dict(zip(codes, sections)))
+            results.append(dict(zip(codes, sections, strict=True)))
 
     return results

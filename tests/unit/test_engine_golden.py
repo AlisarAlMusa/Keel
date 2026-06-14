@@ -8,7 +8,7 @@ Spec says ≥ 20 cases. We have 25 (17 violation cases + 8 legal plans).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -38,31 +38,72 @@ from keel.domain.models import (
 
 TENANT_ID: UUID = UUID("00000000-0000-0000-0000-000000000001")
 STUDENT_ID: UUID = UUID("00000000-0000-0000-0000-000000000002")
-META = PlanMeta(generated_by="manual", created_at=datetime(2024, 1, 1, tzinfo=timezone.utc))
+META = PlanMeta(generated_by="manual", created_at=datetime(2024, 1, 1, tzinfo=UTC))
 
 
-def _c(code: str, credits: int = 3, difficulty: int = 2, terms: tuple[Term, ...] = (Term.FALL, Term.SPRING)) -> Course:
-    return Course(tenant_id=TENANT_ID, code=code, name=code, credits=credits,
-                  difficulty=difficulty, offered_terms=frozenset(terms))
+def _c(
+    code: str,
+    credits: int = 3,
+    difficulty: int = 2,
+    terms: tuple[Term, ...] = (Term.FALL, Term.SPRING),
+) -> Course:
+    return Course(
+        tenant_id=TENANT_ID,
+        code=code,
+        name=code,
+        credits=credits,
+        difficulty=difficulty,
+        offered_terms=frozenset(terms),
+    )
 
 
-def _te(code: str, term: Term = Term.FALL, year: int = 2022,
-        grade: str = "3.0", passed: bool = True) -> TranscriptEntry:
-    return TranscriptEntry(tenant_id=TENANT_ID, student_id=STUDENT_ID,
-                           course_code=code, term=term, year=year,
-                           grade=Decimal(grade), passed=passed)
+def _te(
+    code: str, term: Term = Term.FALL, year: int = 2022, grade: str = "3.0", passed: bool = True
+) -> TranscriptEntry:
+    return TranscriptEntry(
+        tenant_id=TENANT_ID,
+        student_id=STUDENT_ID,
+        course_code=code,
+        term=term,
+        year=year,
+        grade=Decimal(grade),
+        passed=passed,
+    )
 
 
 def _plan(*term_specs: tuple[Term, int, list[str]]) -> Plan:
     terms = [PlanTerm(term=t, year=y, course_codes=codes) for t, y, codes in term_specs]
-    return Plan(plan_id=uuid4(), tenant_id=TENANT_ID, student_id=STUDENT_ID,
-                program_id="P", name="test", version=1, active=True, terms=terms, meta=META)
+    return Plan(
+        plan_id=uuid4(),
+        tenant_id=TENANT_ID,
+        student_id=STUDENT_ID,
+        program_id="P",
+        name="test",
+        version=1,
+        active=True,
+        terms=terms,
+        meta=META,
+    )
 
 
-def _section(code: str, term: Term = Term.FALL, year: int = 2023,
-             slots: tuple[TimeSlot, ...] = (), capacity: int = 10, enrolled: int = 0) -> Section:
-    return Section(tenant_id=TENANT_ID, id=uuid4(), course_code=code,
-                   term=term, year=year, slots=slots, capacity=capacity, enrolled=enrolled)
+def _section(
+    code: str,
+    term: Term = Term.FALL,
+    year: int = 2023,
+    slots: tuple[TimeSlot, ...] = (),
+    capacity: int = 10,
+    enrolled: int = 0,
+) -> Section:
+    return Section(
+        tenant_id=TENANT_ID,
+        id=uuid4(),
+        course_code=code,
+        term=term,
+        year=year,
+        slots=slots,
+        capacity=capacity,
+        enrolled=enrolled,
+    )
 
 
 def _slot(day: DayOfWeek, start: int, end: int) -> TimeSlot:
@@ -73,8 +114,8 @@ def _slot(day: DayOfWeek, start: int, end: int) -> TimeSlot:
 CATALOG: dict[str, Course] = {
     "CS101": _c("CS101", 3, 2, (Term.FALL, Term.SPRING)),
     "CS102": _c("CS102", 3, 3, (Term.FALL, Term.SPRING)),
-    "CS201": _c("CS201", 3, 4, (Term.FALL,)),           # fall-only
-    "CS202": _c("CS202", 4, 4, (Term.SPRING,)),          # spring-only
+    "CS201": _c("CS201", 3, 4, (Term.FALL,)),  # fall-only
+    "CS202": _c("CS202", 4, 4, (Term.SPRING,)),  # spring-only
     "CS301": _c("CS301", 3, 3, (Term.FALL,)),
     "LAB101": _c("LAB101", 1, 2, (Term.FALL, Term.SPRING)),
     "ENG101": _c("ENG101", 3, 2, (Term.FALL, Term.SPRING)),
@@ -137,7 +178,7 @@ class TestViolationCases:
         plan = _plan(
             (Term.FALL, 2022, ["CS101"]),
             (Term.SPRING, 2023, ["CS102"]),
-            (Term.FALL, 2023, ["CS201"]),     # no LAB101 in same term
+            (Term.FALL, 2023, ["CS201"]),  # no LAB101 in same term
         )
         v = verify(plan, CATALOG, GRAPH, [], COREQS, Term.FALL, 2022)
         codes = {x.code for x in v}
@@ -197,20 +238,38 @@ class TestViolationCases:
     def test_capacity_full(self):
         sec = _section("CS101", capacity=30, enrolled=30)
         plan = _plan((Term.FALL, 2023, ["CS101"]))
-        v = verify(plan, CATALOG, GRAPH, [], COREQS, Term.FALL, 2023,
-                   scope="section", sections_by_code={"CS101": sec})
+        v = verify(
+            plan,
+            CATALOG,
+            GRAPH,
+            [],
+            COREQS,
+            Term.FALL,
+            2023,
+            scope="section",
+            sections_by_code={"CS101": sec},
+        )
         codes = {x.code for x in v}
         assert ViolationCode.CAPACITY_FULL in codes
 
     # G12 — TIME_CONFLICT: two sections overlap on the same day
     def test_time_conflict_same_day(self):
-        slot_a = _slot(DayOfWeek.MON, 540, 630)    # 9:00–10:30
-        slot_b = _slot(DayOfWeek.MON, 600, 690)    # 10:00–11:30
+        slot_a = _slot(DayOfWeek.MON, 540, 630)  # 9:00–10:30
+        slot_b = _slot(DayOfWeek.MON, 600, 690)  # 10:00–11:30
         secA = _section("CS101", slots=(slot_a,))
         secB = _section("ENG101", slots=(slot_b,))
         plan = _plan((Term.FALL, 2023, ["CS101", "ENG101"]))
-        v = verify(plan, CATALOG, GRAPH, [], COREQS, Term.FALL, 2023,
-                   scope="section", sections_by_code={"CS101": secA, "ENG101": secB})
+        v = verify(
+            plan,
+            CATALOG,
+            GRAPH,
+            [],
+            COREQS,
+            Term.FALL,
+            2023,
+            scope="section",
+            sections_by_code={"CS101": secA, "ENG101": secB},
+        )
         codes = {x.code for x in v}
         assert ViolationCode.TIME_CONFLICT in codes
 
@@ -218,12 +277,21 @@ class TestViolationCases:
     def test_time_conflict_multi_meeting(self):
         slot_lecture = _slot(DayOfWeek.TUE, 540, 630)
         slot_lab = _slot(DayOfWeek.THU, 480, 570)
-        slot_other = _slot(DayOfWeek.THU, 510, 600)   # overlaps lab slot
+        slot_other = _slot(DayOfWeek.THU, 510, 600)  # overlaps lab slot
         secA = _section("CS101", slots=(slot_lecture, slot_lab))
         secB = _section("ENG101", slots=(slot_other,))
         plan = _plan((Term.FALL, 2023, ["CS101", "ENG101"]))
-        v = verify(plan, CATALOG, GRAPH, [], COREQS, Term.FALL, 2023,
-                   scope="section", sections_by_code={"CS101": secA, "ENG101": secB})
+        v = verify(
+            plan,
+            CATALOG,
+            GRAPH,
+            [],
+            COREQS,
+            Term.FALL,
+            2023,
+            scope="section",
+            sections_by_code={"CS101": secA, "ENG101": secB},
+        )
         codes = {x.code for x in v}
         assert ViolationCode.TIME_CONFLICT in codes
 
@@ -258,13 +326,22 @@ class TestViolationCases:
 
     # G17 — Touching time slots (adjacent, not overlapping) are NOT a conflict
     def test_touching_slots_not_a_conflict(self):
-        slot_a = _slot(DayOfWeek.WED, 540, 630)    # 9:00–10:30
-        slot_b = _slot(DayOfWeek.WED, 630, 720)    # 10:30–12:00 (adjacent)
+        slot_a = _slot(DayOfWeek.WED, 540, 630)  # 9:00–10:30
+        slot_b = _slot(DayOfWeek.WED, 630, 720)  # 10:30–12:00 (adjacent)
         secA = _section("CS101", slots=(slot_a,))
         secB = _section("ENG101", slots=(slot_b,))
         plan = _plan((Term.FALL, 2023, ["CS101", "ENG101"]))
-        v = verify(plan, CATALOG, GRAPH, [], COREQS, Term.FALL, 2023,
-                   scope="section", sections_by_code={"CS101": secA, "ENG101": secB})
+        v = verify(
+            plan,
+            CATALOG,
+            GRAPH,
+            [],
+            COREQS,
+            Term.FALL,
+            2023,
+            scope="section",
+            sections_by_code={"CS101": secA, "ENG101": secB},
+        )
         codes = {x.code for x in v}
         assert ViolationCode.TIME_CONFLICT not in codes
 
@@ -283,7 +360,7 @@ class TestLegalPlans:
         plan = _plan(
             (Term.FALL, 2022, ["CS101"]),
             (Term.SPRING, 2023, ["CS102"]),
-            (Term.FALL, 2023, ["CS201", "LAB101"]),   # coreq satisfied in same term
+            (Term.FALL, 2023, ["CS201", "LAB101"]),  # coreq satisfied in same term
         )
         assert verify(plan, CATALOG, GRAPH, [], COREQS, Term.FALL, 2022) == []
 
@@ -302,7 +379,8 @@ class TestLegalPlans:
 
     def test_exactly_at_credit_cap(self):
         # 6 × 3 = 18 = cap exactly
-        plan = _plan((Term.FALL, 2023, ["HEAVY1", "HEAVY2", "HEAVY3", "HEAVY5", "HEAVY6", "HEAVY7"]))
+        codes = ["HEAVY1", "HEAVY2", "HEAVY3", "HEAVY5", "HEAVY6", "HEAVY7"]
+        plan = _plan((Term.FALL, 2023, codes))
         assert verify(plan, CATALOG, GRAPH, [], COREQS, Term.FALL, 2023) == []
 
     def test_section_open_no_conflict(self):
@@ -311,8 +389,20 @@ class TestLegalPlans:
         secA = _section("CS101", slots=(slot_a,), capacity=30, enrolled=5)
         secB = _section("ENG101", slots=(slot_b,), capacity=30, enrolled=5)
         plan = _plan((Term.FALL, 2023, ["CS101", "ENG101"]))
-        assert verify(plan, CATALOG, GRAPH, [], COREQS, Term.FALL, 2023,
-                      scope="section", sections_by_code={"CS101": secA, "ENG101": secB}) == []
+        assert (
+            verify(
+                plan,
+                CATALOG,
+                GRAPH,
+                [],
+                COREQS,
+                Term.FALL,
+                2023,
+                scope="section",
+                sections_by_code={"CS101": secA, "ENG101": secB},
+            )
+            == []
+        )
 
     def test_multi_term_full_sequence(self):
         plan = _plan(

@@ -13,9 +13,10 @@ from __future__ import annotations
 import numpy as np
 
 from keel.domain.engine.contracts import AuditResult, PlanTerm
-from keel.domain.engine.workload import raw_workload_index
 from keel.domain.features.grad_risk import (
-    FEATURE_ORDER,
+    FEATURE_ORDER as FEATURE_ORDER,  # re-exported so the guard test can assert identity
+)
+from keel.domain.features.grad_risk import (
     RawFeatureInputs,
     compute_features,
     to_vector,

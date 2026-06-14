@@ -96,9 +96,7 @@ class PrereqGraph:
                     in_degree[p] = 0
                 in_degree[course] += 1  # course depends on p → course has one more in-edge
 
-        queue: deque[str] = deque(
-            sorted(code for code, deg in in_degree.items() if deg == 0)
-        )
+        queue: deque[str] = deque(sorted(code for code, deg in in_degree.items() if deg == 0))
         order: list[str] = []
 
         while queue:

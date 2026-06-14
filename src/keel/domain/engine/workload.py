@@ -12,15 +12,15 @@ Source of truth: specs/004-phase-1-engine/spec.md §5; plan.md §3.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
-from typing import Sequence
 
 from keel.domain.models import Course
 
 # Thresholds pinned here; changes require a DECISIONS.md entry.
-_LIGHT_MAX: int = 36    # ≤ 36  → light   (e.g. 3 easy courses: 3×3×4=36)
-_MEDIUM_MAX: int = 54   # ≤ 54  → medium  (e.g. 4 medium courses: 4×3×4.5≈54)
-                        # > 54  → heavy
+_LIGHT_MAX: int = 36  # ≤ 36  → light   (e.g. 3 easy courses: 3×3×4=36)
+_MEDIUM_MAX: int = 54  # ≤ 54  → medium  (e.g. 4 medium courses: 4×3×4.5≈54)
+# > 54  → heavy
 
 
 class WorkloadBand(StrEnum):

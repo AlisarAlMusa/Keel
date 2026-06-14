@@ -20,12 +20,10 @@ Source of truth: specs/004-phase-1-engine/spec.md §5; plan.md §3.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
-from keel.domain.engine.audit import audit
 from keel.domain.engine.contracts import (
-    AuditResult,
     Plan,
     PlanMeta,
     PlanTerm,
@@ -45,9 +43,9 @@ _MAX_TERMS: int = 16
 
 # Term rotation: fall → spring → (next year) fall → spring …
 _NEXT_TERM: dict[Term, tuple[Term, int]] = {
-    Term.FALL: (Term.SPRING, 0),    # same year
-    Term.SPRING: (Term.FALL, 1),    # next year
-    Term.SUMMER: (Term.FALL, 0),    # treat summer as transitional; go to fall same year
+    Term.FALL: (Term.SPRING, 0),  # same year
+    Term.SPRING: (Term.FALL, 1),  # next year
+    Term.SUMMER: (Term.FALL, 0),  # treat summer as transitional; go to fall same year
 }
 
 
@@ -61,6 +59,7 @@ def _all_program_codes(program: Program) -> frozenset[str]:
         CoreRequirement,
         ElectiveGroupRequirement,
     )
+
     codes: set[str] = set()
     for req in program.requirements:
         if isinstance(req, CoreRequirement):
@@ -73,9 +72,9 @@ def _all_program_codes(program: Program) -> frozenset[str]:
 def _is_core_code(code: str, program: Program) -> bool:
     """True if this code appears in any CORE requirement."""
     from keel.domain.engine.contracts import CoreRequirement
+
     return any(
-        isinstance(req, CoreRequirement) and code in req.courses
-        for req in program.requirements
+        isinstance(req, CoreRequirement) and code in req.courses for req in program.requirements
     )
 
 
@@ -132,9 +131,7 @@ def greedy_plan(
     program_codes = _all_program_codes(program)
 
     # Working copy of passed codes — grows as we schedule terms
-    working_passed: set[str] = {
-        e.course_code for e in transcript if e.passed
-    }
+    working_passed: set[str] = {e.course_code for e in transcript if e.passed}
     working_transcript = list(transcript)
 
     current_term = start_term
@@ -179,13 +176,12 @@ def greedy_plan(
             course = catalog[code]
             # Pull in any required coreqs that are also eligible and not yet chosen
             coreqs_needed = [
-                cq for cq in sorted(coreq_map.get(code, set()))
+                cq
+                for cq in sorted(coreq_map.get(code, set()))
                 if cq not in working_passed and cq not in chosen
             ]
             # Check combined credit budget
-            extra = sum(
-                catalog[cq].credits for cq in coreqs_needed if cq in catalog
-            )
+            extra = sum(catalog[cq].credits for cq in coreqs_needed if cq in catalog)
             if credits_used + course.credits + extra > credit_cap:
                 continue
             chosen.append(code)
@@ -213,7 +209,7 @@ def greedy_plan(
             terms=plan_terms + [plan_term],
             meta=PlanMeta(
                 generated_by="greedy",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ),
         )
         violations = verify(
@@ -255,6 +251,6 @@ def greedy_plan(
         terms=plan_terms,
         meta=PlanMeta(
             generated_by="greedy",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         ),
     )

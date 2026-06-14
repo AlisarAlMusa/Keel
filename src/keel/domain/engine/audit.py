@@ -14,9 +14,9 @@ from decimal import Decimal
 from keel.domain.engine.contracts import (
     AuditResult,
     CompletedRequirement,
+    CoreRequirement,
     CreditFloorRequirement,
     ElectiveGroupRequirement,
-    CoreRequirement,
     Program,
     RemainingRequirement,
 )
@@ -82,9 +82,7 @@ def audit(
 
     # ── Credits completed ─────────────────────────────────────────────────────
     credits_completed: float = sum(
-        float(catalog[e.course_code].credits)
-        for e in passed_entries
-        if e.course_code in catalog
+        float(catalog[e.course_code].credits) for e in passed_entries if e.course_code in catalog
     )
 
     total_credits_required = float(program.total_credits)
@@ -108,9 +106,7 @@ def audit(
     num_repeats = sum(1 for cnt in code_counts.values() if cnt > 1)
 
     # ── Requirement satisfaction ───────────────────────────────────────────────
-    completed_reqs, remaining_reqs = _check_requirements(
-        program, passed_codes, catalog
-    )
+    completed_reqs, remaining_reqs = _check_requirements(program, passed_codes, catalog)
 
     # ── Eligible-now (spec §4.4) ──────────────────────────────────────────────
     program_codes: frozenset[str] = _all_program_codes(program)
@@ -168,16 +164,12 @@ def _compute_gpa_metrics(
             term_buckets[key] = []
         term_buckets[key].append((grade_val, credits))
 
-    cumulative_gpa = (
-        total_grade_points / total_credit_hours if total_credit_hours > 0 else 0.0
-    )
+    cumulative_gpa = total_grade_points / total_credit_hours if total_credit_hours > 0 else 0.0
     cumulative_gpa = min(max(cumulative_gpa, 0.0), 4.0)
 
     # Sort terms chronologically (year first, then fall < spring < summer within year)
     _term_order = {Term.FALL: 0, Term.SPRING: 1, Term.SUMMER: 2}
-    sorted_keys = sorted(
-        term_buckets.keys(), key=lambda k: (k[1], _term_order.get(Term(k[0]), 99))
-    )
+    sorted_keys = sorted(term_buckets.keys(), key=lambda k: (k[1], _term_order.get(Term(k[0]), 99)))
 
     recent_term_gpas: list[float] = []
     for key in sorted_keys:

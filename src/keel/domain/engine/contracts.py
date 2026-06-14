@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 
 from keel.domain.models import Term
 
-
 # ── Violation ─────────────────────────────────────────────────────────────────
 
 
