@@ -147,7 +147,7 @@ def _compute_gpa_metrics(
     total_credit_hours = 0.0
 
     # per-term buckets: (term, year) -> [(grade_points, credits)]
-    term_buckets: dict[tuple[str, int], list[tuple[float, int]]] = {}
+    term_buckets: dict[tuple[Term, int], list[tuple[float, int]]] = {}
 
     for entry in transcript:
         if entry.grade is None:
@@ -169,7 +169,8 @@ def _compute_gpa_metrics(
 
     # Sort terms chronologically (year first, then fall < spring < summer within year)
     _term_order = {Term.FALL: 0, Term.SPRING: 1, Term.SUMMER: 2}
-    sorted_keys = sorted(term_buckets.keys(), key=lambda k: (k[1], _term_order.get(Term(k[0]), 99)))
+    sorted_keys: list[tuple[Term, int]] = list(term_buckets.keys())
+    sorted_keys.sort(key=lambda k: (k[1], _term_order.get(k[0], 99)))
 
     recent_term_gpas: list[float] = []
     for key in sorted_keys:
@@ -273,8 +274,8 @@ def _check_requirements(
                 # CreditFloor doesn't filter by category at this level —
                 # category is informational for advisors; all passed credits count
             )
-            still_needed = max(req.min_credits - earned, 0.0)
-            if still_needed <= 0:
+            credits_still_needed = float(max(float(req.min_credits) - earned, 0.0))
+            if credits_still_needed <= 0:
                 completed.append(
                     CompletedRequirement(
                         requirement_id=req.requirement_id,
@@ -286,7 +287,7 @@ def _check_requirements(
                     RemainingRequirement(
                         requirement_id=req.requirement_id,
                         type="CREDIT_FLOOR",
-                        still_needed=still_needed,
+                        still_needed=credits_still_needed,
                     )
                 )
 

@@ -175,10 +175,10 @@ def greedy_plan(
         for code in eligible:
             course = catalog[code]
             # Pull in any required coreqs that are also eligible and not yet chosen
-            coreqs_needed = [
-                cq
-                for cq in sorted(coreq_map.get(code, set()))
-                if cq not in working_passed and cq not in chosen
+            coreqs_needed: list[str] = [
+                cq_code
+                for cq_code in sorted(coreq_map.get(code, set()))
+                if cq_code not in working_passed and cq_code not in chosen
             ]
             # Check combined credit budget
             extra = sum(catalog[cq].credits for cq in coreqs_needed if cq in catalog)
@@ -186,10 +186,10 @@ def greedy_plan(
                 continue
             chosen.append(code)
             credits_used += course.credits
-            for cq in coreqs_needed:
-                if cq in catalog and cq not in chosen:
-                    chosen.append(cq)
-                    credits_used += catalog[cq].credits
+            for coreq_code in coreqs_needed:
+                if coreq_code in catalog and coreq_code not in chosen:
+                    chosen.append(coreq_code)
+                    credits_used += catalog[coreq_code].credits
 
         if not chosen:
             current_term, current_year = _advance_term(current_term, current_year)
