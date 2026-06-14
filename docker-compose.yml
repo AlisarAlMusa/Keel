@@ -10,6 +10,7 @@ name: keel
 x-app-env: &app-env
   KEEL_ENV: ${KEEL_ENV}
   KEEL_LOG_LEVEL: ${KEEL_LOG_LEVEL}
+  KEEL_LOG_FILE: ${KEEL_LOG_FILE:-/var/log/keel/app.json}
   DATABASE_URL: ${DATABASE_URL}
   REDIS_URL: ${REDIS_URL}
   MINIO_ENDPOINT: ${MINIO_ENDPOINT}
@@ -173,6 +174,8 @@ services:
     environment: *app-env
     ports:
       - "8000:8000"
+    volumes:
+      - keel-logs:/var/log/keel
     depends_on:
       db:
         condition: service_healthy
@@ -189,6 +192,8 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     environment: *app-env
+    volumes:
+      - keel-logs:/var/log/keel
     depends_on:
       db:
         condition: service_healthy
@@ -241,6 +246,7 @@ volumes:
   db-data:
   minio-data:
   model-artifacts:
+  keel-logs:   # JSON logs from api + worker; survives restarts (ENGINEERING_RULES §8)
   # MLflow no longer needs a volume — metadata lives in Postgres, artifacts in MinIO.
 
 networks:

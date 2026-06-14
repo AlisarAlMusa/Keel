@@ -34,7 +34,13 @@ class Settings(BaseSettings):
     # --- App ---
     keel_env: str = "local"
     keel_log_level: str = "INFO"
+    keel_log_file: str = ""  # empty = stdout only; set to volume path in prod
     keel_api_port: int = 8000
+
+    # --- CORS (Engineering Rules §15) ---
+    # Empty list = CORS disabled (safe default for API-only / same-origin dev).
+    # In production, set to the widget origin(s): '["https://widget.uni.edu"]'
+    cors_allowed_origins: list[str] = []
 
     # --- Datastores (non-secret; password merged from Vault at runtime) ---
     database_url: str = "postgresql+asyncpg://keel_app:placeholder@db:5432/keel"
