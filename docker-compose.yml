@@ -24,6 +24,18 @@ x-app-env: &app-env
   VAULT_TOKEN: ${VAULT_TOKEN}
   VAULT_KV_MOUNT: ${VAULT_KV_MOUNT}
   VAULT_SECRET_PATH: ${VAULT_SECRET_PATH}
+  # LLM model names (non-secret; keys come from Vault)
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+  GEMINI_LITE_MODEL: ${GEMINI_LITE_MODEL:-gemini-2.0-flash-lite}
+  # RAG knobs
+  EMBED_MODEL: ${EMBED_MODEL:-embed-multilingual-v3.0}
+  EMBED_DIM: ${EMBED_DIM:-1024}
+  RERANK_MODEL: ${RERANK_MODEL:-rerank-multilingual-v3.0}
+  DENSE_K: ${DENSE_K:-20}
+  SPARSE_K: ${SPARSE_K:-20}
+  RRF_K: ${RRF_K:-60}
+  RERANK_TOP_N: ${RERANK_TOP_N:-5}
+  SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-1800}
 
 services:
   db:
@@ -104,6 +116,8 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       KEEL_JWT_SIGNING_KEY: ${KEEL_JWT_SIGNING_KEY}
       KEEL_WIDGET_TOKEN_SECRET: ${KEEL_WIDGET_TOKEN_SECRET}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      COHERE_API_KEY: ${COHERE_API_KEY}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -112,7 +126,9 @@ services:
           minio_access_key=$MINIO_ROOT_USER \
           minio_secret_key=$MINIO_ROOT_PASSWORD \
           jwt_signing_key=$KEEL_JWT_SIGNING_KEY \
-          widget_token_secret=$KEEL_WIDGET_TOKEN_SECRET
+          widget_token_secret=$KEEL_WIDGET_TOKEN_SECRET \
+          gemini_api_key=$GEMINI_API_KEY \
+          cohere_api_key=$COHERE_API_KEY
     networks: [keel]
 
   # One-shot: create the MinIO buckets MLflow + the app need, then exit.

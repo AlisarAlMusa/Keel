@@ -1,4 +1,4 @@
-"""US3 — baseline migration creates 16 tables + RLS on the 15 tenant-owned ones.
+"""US3 — migrations create all tables + RLS on the 18 tenant-owned ones.
 
 Requires a real PostgreSQL (with pgvector + pgcrypto available). Set
 ``TEST_DATABASE_URL`` to an asyncpg DSN, e.g.::
@@ -6,7 +6,7 @@ Requires a real PostgreSQL (with pgvector + pgcrypto available). Set
     TEST_DATABASE_URL=postgresql+asyncpg://keel_app:keel_local_pw@localhost:5432/keel
 
 If unset, the test is skipped so the lint/type/unit CI job stays green.
-Verifies SC-003 (16 tables, 15 policies, reversible).
+Verifies SC-003 (19 tables, 18 policies after 0001+0002, reversible).
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 EXPECTED_TABLES = {
+    # 0001 baseline (16 tables)
     "tenants",
     "users",
     "students",
@@ -38,6 +39,10 @@ EXPECTED_TABLES = {
     "outbox",
     "audit_log",
     "notifications",
+    # 0002 phase 2 (3 tables)
+    "programs",
+    "student_preferences",
+    "rag_chunks",
 }
 
 
@@ -78,7 +83,7 @@ def test_upgrade_creates_tables_and_rls_then_downgrades() -> None:
     command.upgrade(cfg, "head")
     tables, policies = asyncio.run(_fetch_counts())
     assert EXPECTED_TABLES.issubset(tables), f"missing tables: {EXPECTED_TABLES - tables}"
-    assert policies == 15, f"expected 15 tenant_isolation policies, found {policies}"
+    assert policies == 18, f"expected 18 tenant_isolation policies, found {policies}"
 
     command.downgrade(cfg, "base")
     tables_after, _ = asyncio.run(_fetch_counts())

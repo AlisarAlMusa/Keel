@@ -22,6 +22,7 @@ specs
 docs
 *.md
 !README.md
+!data/
 Keel_Brief.pdf
 
 # Local env / secrets

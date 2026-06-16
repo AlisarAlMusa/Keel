@@ -17,18 +17,27 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import cohere as cohere_lib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from keel import __version__
+from keel.agent.graph import build_agent, run_agent
+from keel.agent.tools import AgentDeps
+from keel.api.routers import admin as admin_router
+from keel.api.routers import chat as chat_router
 from keel.api.routers import health
 from keel.config import Settings, get_settings
+from keel.domain.models import Term
 from keel.infra import redis as redis_infra
 from keel.infra import storage as storage_infra
 from keel.infra import tracing
 from keel.infra.database import engine as db_infra
+from keel.infra.llm import get_llm
+from keel.infra.model_client import ModelClient
 from keel.infra.vault import VaultConfig, load_secrets
 from keel.logging import configure_logging, get_logger
+from keel.services.router import _load_fallback_threshold
 
 _log = get_logger(__name__)
 
@@ -87,13 +96,54 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:  # noqa: BLE001 — bucket ensure is best-effort at boot
         _log.warning("bucket_ensure_failed", error=type(exc).__name__)
 
-    _log.info("startup_complete")
-    try:
-        yield
-    finally:
-        await engine.dispose()
-        await app.state.redis.aclose()
-        _log.info("shutdown_complete")
+    # 5. Phase-2 singletons: LLM clients, Cohere, model-server, agent
+    gemini_key: str = secrets["gemini_api_key"]
+    cohere_key: str = secrets["cohere_api_key"]
+
+    app.state.llm_agent = get_llm("agent", api_key=gemini_key)
+    app.state.llm_lite = get_llm("lite", api_key=gemini_key)
+    app.state.cohere_client = cohere_lib.AsyncClientV2(api_key=cohere_key)
+    app.state.model_client = ModelClient(settings.model_server_url)
+
+    # Router threshold loaded from artifact (not settings — live-editable)
+    app.state.fallback_threshold = _load_fallback_threshold()
+
+    # AsyncPostgresSaver for durable LangGraph checkpointing.
+    # psycopg3 requires "postgresql://" — strip the "+asyncpg" SQLAlchemy prefix.
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+    pg_dsn = dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
+    async with AsyncPostgresSaver.from_conn_string(pg_dsn) as checkpointer:
+        await checkpointer.setup()
+
+        # Tools open their own sessions per-call via session_factory.
+        deps = AgentDeps(
+            session_factory=app.state.session_factory,
+            cohere_client=app.state.cohere_client,
+            llm_agent=app.state.llm_agent,
+            settings=settings,
+            current_term=Term.FALL,
+            current_year=2025,
+        )
+        compiled_agent = build_agent(app.state.llm_agent, deps, checkpointer)
+
+        async def _agent_run(envelope):  # type: ignore[no-untyped-def]
+            return await run_agent(
+                envelope=envelope,
+                compiled_graph=compiled_agent,
+                redis=app.state.redis,
+                session_ttl=settings.session_ttl_seconds,
+            )
+
+        app.state.agent_run = _agent_run
+
+        _log.info("startup_complete")
+        try:
+            yield
+        finally:
+            await engine.dispose()
+            await app.state.redis.aclose()
+            _log.info("shutdown_complete")
 
 
 def create_app() -> FastAPI:
@@ -110,6 +160,8 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(health.router)
+    app.include_router(chat_router.router)
+    app.include_router(admin_router.router)
     tracing.instrument_fastapi(app)
     return app
 

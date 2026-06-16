@@ -50,17 +50,17 @@ The ordered build plan with acceptance criteria. Check items off as they land. `
 
 ## Phase 2 — Serving, RAG, Guardrails, Router, First Loop (Day 3)
 
-- [ ] 🔴 `model-server/` — lean ONNX/joblib service; refuses to boot on SHA mismatch
-- [ ] 🔴 RAG: embed catalog/policy chunks → pgvector (tenant-tagged); hybrid retrieval + rerank; DAG-grounded answers
-- [ ] 🔴 `infra/guardrails.py` — input rails (injection, cross-tenant), output rails (PII redaction); hardcoded
-- [ ] 🔴 Classifier router — intent model routes easy→workflow, hard→agent
-- [ ] `agent/` — bounded LangGraph scaffold (allowlist, loop cap, token budget)
-- [ ] First tools: `audit_degree`, `propose_plan` (generate→validate→repair), `rag_search`
-- [ ] Redis short-term session memory (TTL)
-- [ ] First end-to-end: message → router → agent → valid plan returned
-- [ ] ⚙ Intent classifier F1 gate
-- [ ] ⚙ Guardrails red-team gate (injection + cross-tenant)
-- [ ] ⚙ PII redaction test (fake key never appears in logs/traces)
+- [x] 🔴 `model-server/` — lean ONNX/joblib service; refuses to boot on SHA mismatch
+- [x] 🔴 RAG: embed catalog/policy chunks → pgvector (tenant-tagged); hybrid retrieval + rerank; DAG-grounded answers
+- [x] 🔴 `infra/guardrails.py` — input rails (injection, cross-tenant), output rails (PII redaction); hardcoded
+- [x] 🔴 Classifier router — intent model routes easy→workflow, hard→agent
+- [x] `agent/` — bounded LangGraph scaffold (allowlist, loop cap, token budget)
+- [x] First tools: `audit_degree`, `propose_plan` (generate→validate→repair), `rag_search`
+- [x] Redis short-term session memory (TTL)
+- [x] First end-to-end: message → router → agent → valid plan returned
+- [x] ⚙ Intent classifier F1 gate
+- [x] ⚙ Guardrails red-team gate (injection + cross-tenant)
+- [x] ⚙ PII redaction test (fake key never appears in logs/traces)
 
 ---
 
@@ -128,6 +128,15 @@ The ordered build plan with acceptance criteria. Check items off as they land. `
 
 ## Cut order if behind (never cut engine / prediction / approval gate / guardrails / MLflow registry / CI gates)
 1. Multilingual (G2) → 2. Career Path (E2) → 3. GPA estimate (D3) → 4. Personalized Alerts (G1) → 5. Automatic Replanning (A6)
+
+---
+
+## To add if time (stretch — not on the critical path)
+
+- **NeMo Guardrails sidecar** — replace the in-process `infra/guardrails.py` with a
+  NeMo Guardrails server running as a separate Docker service. The in-process rails
+  are the MVP; the sidecar decouples rail updates from app deploys and is the
+  production-grade architecture. Pre-condition: all CI guardrail gates must remain green.
 
 ---
 

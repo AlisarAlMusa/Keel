@@ -86,6 +86,14 @@ jobs:
       - name: Write CI .env
         run: cp .env.example .env
 
+      - name: Pre-seed model artifacts from committed ml/ directory
+        run: |
+          docker volume create keel_model-artifacts
+          docker run --rm \
+            -v keel_model-artifacts:/dest \
+            -v ${{ github.workspace }}/ml:/src:ro \
+            alpine sh -c "cp -r /src/. /dest/"
+
       - name: Bring up the stack
         run: docker compose up -d --build
 
@@ -103,15 +111,12 @@ jobs:
       - name: Apply migrations
         run: docker compose exec -T api uv run alembic upgrade head
 
-      - name: Seed development data
-        run: docker compose exec -T api uv run python -m scripts.seed
-
-      - name: Verify RLS policies (expect 15)
+      - name: Verify RLS policies (expect 18)
         run: |
           n=$(docker compose exec -T db psql -U keel_app -d keel -tAc \
             "SELECT count(*) FROM pg_policies WHERE policyname='tenant_isolation'")
           echo "tenant_isolation policies: $n"
-          test "$n" = "15"
+          test "$n" = "18"
 
       - name: Run integration tests against the stack DB
         env:

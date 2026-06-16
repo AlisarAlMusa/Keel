@@ -17,7 +17,25 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-from keel.infra.database.models import TENANT_OWNED_TABLES
+# Frozen at migration-0001 time — never import live models into a migration.
+# Phase 2 tables (programs, student_preferences, rag_chunks) are added in 0002.
+_TENANT_OWNED_TABLES: tuple[str, ...] = (
+    "users",
+    "students",
+    "courses",
+    "prerequisites",
+    "corequisites",
+    "sections",
+    "program_requirements",
+    "student_transcript",
+    "plans",
+    "enrollments",
+    "waitlist",
+    "request_queue",
+    "outbox",
+    "audit_log",
+    "notifications",
+)
 
 revision: str = "0001_baseline"
 down_revision: str | None = None
@@ -345,11 +363,11 @@ def upgrade() -> None:
     )
 
     # Helpful index for tenant-scoped scans on the busiest child tables.
-    for table in TENANT_OWNED_TABLES:
+    for table in _TENANT_OWNED_TABLES:
         op.create_index(f"ix_{table}_tenant_id", table, ["tenant_id"])
 
     # --- Row-Level Security on every tenant-owned table ---
-    for table in TENANT_OWNED_TABLES:
+    for table in _TENANT_OWNED_TABLES:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
         op.execute(

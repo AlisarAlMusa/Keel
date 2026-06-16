@@ -58,7 +58,7 @@ async def _run() -> None:
         for tid in tenant_ids:
             counts = await _counts_for_tenant(conn, tid)
             assert counts["courses"] >= 20, counts
-            assert counts["students"] == 2, counts
+            assert counts["students"] == 3, counts
             assert counts["sections"] >= 20, counts
             assert counts["prerequisites"] > 0, counts
             assert counts["transcripts"] > 0, counts
