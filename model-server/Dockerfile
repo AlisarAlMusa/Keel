@@ -1,5 +1,5 @@
 # Keel model-server image. Build context = ./model-server (its OWN context).
-# Lean: onnxruntime/joblib only — no torch, no backend dependencies.
+# Lean: scikit-learn/joblib only — no torch, no ONNX, no backend dependencies.
 
 FROM python:3.12-slim AS builder
 
@@ -9,8 +9,6 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
     UV_HTTP_TIMEOUT=300
-
-# onnxruntime/numpy wheels are large; 300s avoids download timeouts on slow links.
 
 WORKDIR /app
 
