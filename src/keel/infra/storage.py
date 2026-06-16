@@ -38,3 +38,17 @@ def ensure_bucket(client: Any, bucket: str) -> None:
 def put_text(client: Any, bucket: str, key: str, text: str) -> None:
     """Upload a UTF-8 text object."""
     client.put_object(Bucket=bucket, Key=key, Body=text.encode("utf-8"))
+
+
+def get_text(client: Any, bucket: str, key: str) -> str:
+    """Download a UTF-8 text object."""
+    resp = client.get_object(Bucket=bucket, Key=key)
+    return resp["Body"].read().decode("utf-8")  # type: ignore[no-any-return]
+
+
+def delete_object(client: Any, bucket: str, key: str) -> None:
+    """Delete an object; no-op if it does not exist."""
+    try:
+        client.delete_object(Bucket=bucket, Key=key)
+    except ClientError:
+        pass
