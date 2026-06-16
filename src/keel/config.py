@@ -65,6 +65,22 @@ class Settings(BaseSettings):
     vault_kv_mount: str = "secret"
     vault_secret_path: str = "keel/app"
 
+    # --- LLM models (names are not secret; keys come from Vault) ---
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_lite_model: str = "gemini-2.0-flash-lite"
+
+    # --- RAG / embedding knobs (all tuneable without code change) ---
+    embed_model: str = "embed-multilingual-v3.0"
+    embed_dim: int = 1024
+    rerank_model: str = "rerank-multilingual-v3.0"
+    dense_k: int = 20
+    sparse_k: int = 20
+    rrf_k: int = 60
+    rerank_top_n: int = 5
+
+    # --- Session / cache ---
+    session_ttl_seconds: int = 1800  # 30-min sliding TTL for Redis chat memory
+
     @property
     def service_name(self) -> str:
         return self.otel_service_name
