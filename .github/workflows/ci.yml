@@ -111,9 +111,6 @@ jobs:
       - name: Apply migrations
         run: docker compose exec -T api uv run alembic upgrade head
 
-      - name: Seed development data
-        run: docker compose exec -T api uv run python -m scripts.seed
-
       - name: Verify RLS policies (expect 15)
         run: |
           n=$(docker compose exec -T db psql -U keel_app -d keel -tAc \
