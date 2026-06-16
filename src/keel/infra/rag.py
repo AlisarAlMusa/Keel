@@ -53,7 +53,7 @@ async def _embed_query(
             input_type="search_query",
             embedding_types=["float"],
         )
-        floats: list[list[float]] = res.embeddings.float_  # type: ignore[union-attr]
+        floats: list[list[float]] = (res.embeddings.float_ or []) if res.embeddings else []
         return floats[0]
     except Exception as exc:
         _log.warning("rag.embed_query_failed", error=str(exc))

@@ -170,7 +170,7 @@ async def _load_student_data(
                 ),
                 {"pid": student["program_id"], "tid": tenant_id},
             )
-            req_rows = rq.mappings().all()
+            req_rows = list(rq.mappings().all())
 
     return {
         "student": dict(student),
@@ -304,7 +304,7 @@ class AgentDeps:
     current_year: int = 2025
 
 
-def make_tools(deps: AgentDeps) -> list:
+def make_tools(deps: AgentDeps) -> list[Any]:
     """Build the three agent tools closed over their dependencies."""
 
     @tool(args_schema=AuditDegreeInput)
@@ -578,7 +578,7 @@ async def _llm_propose(
 
     prompt = (
         f"You are helping a student plan their {term.value} {year} semester.\n"
-        f"Program: {program.name}\n"
+        f"Program: {program.program_id}\n"
         f"Eligible courses (pick 3-4 appropriate ones, max 12-15 credits):\n"
         + "\n".join(eligible_desc)
         + violation_text
@@ -617,7 +617,7 @@ async def _llm_propose(
             plan_id=uuid4(),
             tenant_id=UUID(tenant_id),
             student_id=UUID(student_id),
-            program_id=program.id,
+            program_id=program.program_id,
             name=f"Proposed {term.value.title()} {year}",
             version=1,
             active=False,

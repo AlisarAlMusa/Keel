@@ -16,7 +16,7 @@ is stored on app.state and accessed via Depends.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 import redis.asyncio as aioredis
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -81,7 +81,7 @@ async def _load_session_history(
     try:
         raw = await redis.get(key)
         if raw:
-            return json.loads(raw)[-_SESSION_N * 2 :]  # last N turns = 2*N messages
+            return cast(list[dict[str, Any]], json.loads(raw))[-_SESSION_N * 2 :]
     except Exception as exc:
         _log.warning("agent.session_load_failed", error=str(exc))
     return []
