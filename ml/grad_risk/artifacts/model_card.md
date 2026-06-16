@@ -23,9 +23,10 @@ Train: 3200 rows  |  Test: 800 rows  |  At-risk rate: 0.248 (train) / 0.249 (tes
 | C-tuned | 0.8067 | 0.7207 | 0.8927 | 0.8449 | 0.1015 |
 
 ## Served artifact
-File: `grad_risk.onnx`
-SHA-256: `fda480982c284cd9928af32af970262459554a71b91175a104925d64cb137687`
+File: `grad_risk.joblib`
+SHA-256: `e4bef218508c20713654b9eb15a06413c8eb532d9f86440d4236c3535a231f7a`
 
+Served via joblib + sklearn runtime (no ONNX dependency — see DECISIONS.md D-P2-003).
 The model-server refuses to boot if the SHA-256 of the loaded file does not match.
 
 ## Feature order
