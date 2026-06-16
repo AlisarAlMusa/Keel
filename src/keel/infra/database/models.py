@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models — the 16 baseline tables (data-model.md).
+"""SQLAlchemy ORM models — 16 baseline + Phase 2 additions.
 
 These are SEPARATE from the domain value objects in ``domain.models``.
 Repositories map ORM rows -> domain objects and never leak ORM instances above
@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -80,6 +81,26 @@ class User(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 addition — must be declared before Student and ProgramRequirement
+# because they FK into it.
+# ---------------------------------------------------------------------------
+
+
+class Program(Base):
+    __tablename__ = "programs"
+
+    id: Mapped[UUID] = _pk()
+    tenant_id: Mapped[UUID] = _tenant_fk()
+    code: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    degree_type: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'BS'"))
+    total_credits_required: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("120")
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class Student(Base):
     __tablename__ = "students"
 
@@ -89,11 +110,18 @@ class Student(Base):
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     program_code: Mapped[str] = mapped_column(Text, nullable=False)
+    program_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("programs.id", ondelete="SET NULL"), nullable=True
+    )
     max_credits_per_term: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("18")
     )
     current_term: Mapped[str] = mapped_column(Text, nullable=False)
     current_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    has_hold: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    hold_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -154,6 +182,9 @@ class ProgramRequirement(Base):
     id: Mapped[UUID] = _pk()
     tenant_id: Mapped[UUID] = _tenant_fk()
     program_code: Mapped[str] = mapped_column(Text, nullable=False)
+    program_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("programs.id", ondelete="SET NULL"), nullable=True
+    )
     group_name: Mapped[str] = mapped_column(Text, nullable=False)
     required_credits: Mapped[int] = mapped_column(Integer, nullable=False)
     eligible_course_codes: Mapped[list[Any]] = mapped_column(
@@ -281,6 +312,61 @@ class Notification(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 additions — StudentPreference, RagChunk
+# ---------------------------------------------------------------------------
+
+
+class StudentPreference(Base):
+    __tablename__ = "student_preferences"
+
+    id: Mapped[UUID] = _pk()
+    tenant_id: Mapped[UUID] = _tenant_fk()
+    student_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False
+    )
+    response_style: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'detailed'")
+    )
+    language: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'en'"))
+    difficulty_preference: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'any'")
+    )
+    career_interest: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=_NOW
+    )
+
+
+class RagChunk(Base):
+    """One embedded chunk in the RAG corpus.
+
+    ``chunk_id`` is a stable hash so re-ingest is idempotent (upsert on conflict).
+    ``embedding`` is a 1024-dim vector (Cohere embed-multilingual-v3.0).
+    FTS is handled via a GIN expression index on ``to_tsvector('english', content)``
+    created in the migration; no generated column in the ORM avoids type-map friction.
+    """
+
+    __tablename__ = "rag_chunks"
+
+    id: Mapped[UUID] = _pk()
+    tenant_id: Mapped[UUID] = _tenant_fk()
+    chunk_id: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    doc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    section: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[Any] = mapped_column(Vector(1024), nullable=True)
+    lang: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'en'"))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=_NOW
+    )
+
+
 # Tables that carry tenant-owned data and therefore receive RLS in the migration.
 TENANT_OWNED_TABLES: tuple[str, ...] = (
     "users",
@@ -298,4 +384,8 @@ TENANT_OWNED_TABLES: tuple[str, ...] = (
     "outbox",
     "audit_log",
     "notifications",
+    # Phase 2 additions
+    "programs",
+    "student_preferences",
+    "rag_chunks",
 )
