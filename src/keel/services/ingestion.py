@@ -111,7 +111,7 @@ async def _embed_texts(
                         input_type=input_type,
                         embedding_types=["float"],
                     )
-                    floats = res.embeddings.float_  # type: ignore[union-attr]
+                    floats = (res.embeddings.float_ or []) if res.embeddings else []
                     results.extend(floats)
         except Exception as exc:
             _log.error("embed_batch_failed", batch_start=i, error=str(exc))
@@ -191,7 +191,7 @@ async def _delete_orphans(
         ),
         {"tid": str(tenant_id), "src": source, "ids": list(live_chunk_ids)},
     )
-    return result.rowcount or 0
+    return result.rowcount or 0  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
