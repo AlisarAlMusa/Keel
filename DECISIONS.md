@@ -378,6 +378,80 @@ NOT `label_map.json`'s `id2label` order. The serving contract (and the gate) use
 predictions. Documented in the model card and the intent spec's serving section so
 the later model-server integration does not reintroduce the bug.
 
+## Phase 2 — Model Server, RAG, Guardrails, Router, Agent
+
+### D-P2-001 — Router: argmax = route, max_prob = trust gate, agent = single fallback
+
+**Decision.** `proba = intent(text); route, conf = argmax(proba), max(proba)`.
+If `conf >= FALLBACK_THRESHOLD` (≈ 0.5115, in `router_config.json`) → dispatch to the
+flow mapped to that label directly (skipping agent intent-decision). If `conf < FALLBACK_THRESHOLD`
+or the classifier is unreachable → hand to the bounded LangGraph agent, which has conversation
+history and decides intent + handles the turn. There is no third path.
+
+**All 15 labels mapped from Day 2.** Five real Phase-2 flows
+(`advise`, `audit`, `plan`, `out_of_scope`, `chitchat`); ten stubs (one fixed
+"not available yet" string per label, no LLM). Stubs are replaced phase by phase —
+no router changes needed after today. The full label set stays because it also feeds
+per-intent analytics and agent priming.
+
+**Multi-step / ambiguous messages fall to the agent by design.** A context-dependent
+follow-up ("then do one for me") is naturally ambiguous on its own, scores low
+confidence, and reaches the agent — which has the conversation history to resolve it.
+
+**Rejected.** (1) A second threshold tier or per-route thresholds — adds complexity with
+minimal gain at MVP scale; one global threshold is documented in `router_config.json`.
+(2) Feeding conversation history to the classifier — would let it wrongly inherit a
+previous turn's intent.
+
+### D-P2-002 — chitchat / out_of_scope: LLM-direct lite model, not canned strings
+
+**Decision.** `chitchat` and `out_of_scope` reach a direct LLM call using
+`GEMINI_LITE_MODEL` (`gemini-2.0-flash-lite`) with a hard 50-token cap.
+The main `GEMINI_MODEL` (`gemini-2.5-flash`) handles all reasoning-heavy flows
+(plan, advise, audit, RAG, repair, mitigation) and the agent.
+
+**Rationale.** Varied, warm responses at near-zero cost; canned strings feel robotic.
+If the lite call fails, a hardcoded fallback string is returned — never silently routed
+to the full agent.
+
+**Rejected.** Using the full model for chitchat — unnecessary cost.
+Using canned strings — poor UX for greetings/small talk.
+
+### D-P2-003 — grad_risk served as joblib (not ONNX)
+
+**Decision.** The model server loads `grad_risk.joblib` and pins its SHA-256
+(`e4bef218508c20713654b9eb15a06413c8eb532d9f86440d4236c3535a231f7a`).
+Both `grad_risk.onnx` and `grad_risk.joblib` exist as training outputs;
+spec §3.1 mandates "no ONNX runtime in the model server — just joblib + sklearn."
+
+**Rationale.** `skl2onnx` conversion of HistGB is version-sensitive (D-GR-005).
+Joblib via Python runtime is fully equivalent for this use case. Keeping the
+model server torch-free and ONNX-free is a hard architectural boundary.
+
+**Rejected.** Serving the ONNX artifact — would require `onnxruntime` in the
+model-server image, contradicting spec §3.1.
+
+### D-P2-004 — RAG: hybrid dense + sparse, RRF k=60, Cohere rerank, no parent-child
+
+**Decision.** Retrieval pipeline: redact query → dense cosine (pgvector, top 20)
++ sparse FTS (top 20) → RRF fuse (k=60, the RRF paper default) → Cohere
+`rerank-multilingual-v3.0` top 12 → return top 5 to LLM.
+
+**Chunk rules:** course = 1 chunk (overlap 0 — courses are discrete units);
+policy = 1 chunk per `## ` heading (whole doc if < ~400 tokens, overlap 0 for
+clean heading boundaries).
+
+**No parent-child chunking.** With rerank + a ~30–40-chunk corpus, retrieve-top-k
++ rerank already surfaces the relevant clauses for cross-section questions.
+Parent-child storage would be machinery with no measurable gain at this scale.
+
+**Embedding model:** `cohere embed-multilingual-v3.0`, 1024-dim (covers multilingual
+stretch, no torch required). pgvector column = `vector(1024)`.
+
+**Rejected.** `k=80` or higher RRF constant — default 60 is well-studied, tuning deferred.
+FAISS/Qdrant — pgvector keeps retrieval in the same DB with the same tenant filter,
+no extra service. Parent-child — unjustified at this corpus size.
+
 ### D-IC-005 — Training notebooks excluded from ruff
 
 **Decision.** `[tool.ruff] extend-exclude = ["*.ipynb"]`. Generators and gates in
