@@ -40,7 +40,10 @@ _log = get_logger(__name__)
 # Path is fixed — it is an artifact checked in alongside the model.
 _ROUTER_CONFIG_PATH = (
     Path(__file__).parent.parent.parent.parent
-    / "ml" / "intent" / "artifacts" / "router_config.json"
+    / "ml"
+    / "intent"
+    / "artifacts"
+    / "router_config.json"
 )
 
 _STUB_RESPONSE = (

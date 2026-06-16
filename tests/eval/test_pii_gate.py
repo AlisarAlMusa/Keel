@@ -96,10 +96,7 @@ def test_redact_never_raises() -> None:
 
 def test_multiple_pii_in_one_string() -> None:
     """Multiple PII items in one string must all be redacted."""
-    text = (
-        "Email alice@test.edu, key sk-abc123def456ghi789jkl012mno345, "
-        "SSN 111-22-3333"
-    )
+    text = "Email alice@test.edu, key sk-abc123def456ghi789jkl012mno345, SSN 111-22-3333"
     result = redact(text)
     assert "alice@test.edu" not in result
     assert "sk-abc123def456ghi789jkl012mno345" not in result

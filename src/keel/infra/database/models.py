@@ -118,9 +118,7 @@ class Student(Base):
     )
     current_term: Mapped[str] = mapped_column(Text, nullable=False)
     current_year: Mapped[int] = mapped_column(Integer, nullable=False)
-    has_hold: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false")
-    )
+    has_hold: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     hold_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = _created_at()
 

@@ -69,6 +69,7 @@ async def upload_document(
     # Store to MinIO
     s3_client = request.app.state.storage
     from keel.config import get_settings  # noqa: PLC0415 — local import avoids circular
+
     _settings = get_settings()
 
     try:

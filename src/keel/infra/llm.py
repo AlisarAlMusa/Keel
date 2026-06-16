@@ -24,9 +24,9 @@ from keel.config import get_settings
 Role = Literal["agent", "lite", "judge"]
 
 _TEMPERATURE: dict[str, float] = {
-    "agent": 0.0,   # deterministic — plan repair must be consistent
-    "lite": 0.7,    # varied — chitchat benefits from natural phrasing
-    "judge": 0.0,   # deterministic — relevance scoring must be repeatable
+    "agent": 0.0,  # deterministic — plan repair must be consistent
+    "lite": 0.7,  # varied — chitchat benefits from natural phrasing
+    "judge": 0.0,  # deterministic — relevance scoring must be repeatable
 }
 
 

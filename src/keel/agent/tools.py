@@ -632,9 +632,7 @@ async def _llm_propose(
 def _format_plan(plan: Plan, catalog: dict[str, Course]) -> str:
     lines = [f"**Proposed Plan: {plan.name}** (engine-verified ✓)\n"]
     for pt in plan.terms:
-        credits = sum(
-            float(catalog[c].credits) for c in pt.course_codes if c in catalog
-        )
+        credits = sum(float(catalog[c].credits) for c in pt.course_codes if c in catalog)
         lines.append(f"{pt.term.value.title()} {pt.year} — {credits:.0f} credits:")
         for code in pt.course_codes:
             name = catalog[code].name if code in catalog else code

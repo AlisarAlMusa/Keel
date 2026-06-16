@@ -136,9 +136,9 @@ _REDACT_RULES: list[tuple[re.Pattern[str], str]] = [
     # Email addresses
     (re.compile(r"[\w.+\-]+@[\w\-]+\.[\w.\-]+", re.I), "[EMAIL]"),
     # Common vendor API key prefixes + long opaque tokens
-    (re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), "[REDACTED_KEY]"),           # OpenAI-style
+    (re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), "[REDACTED_KEY]"),  # OpenAI-style
     (re.compile(r"\bpk-[A-Za-z0-9]{20,}\b"), "[REDACTED_KEY]"),
-    (re.compile(r"\bAIza[A-Za-z0-9_\-]{30,}\b"), "[REDACTED_KEY]"),       # Google API key
+    (re.compile(r"\bAIza[A-Za-z0-9_\-]{30,}\b"), "[REDACTED_KEY]"),  # Google API key
     (re.compile(r"\bcohere-[A-Za-z0-9_\-]{20,}\b", re.I), "[REDACTED_KEY]"),
     # Generic secret-shaped strings: 32+ hex chars or 40+ base64-alnum
     (re.compile(r"\b[0-9a-f]{32,}\b", re.I), "[REDACTED_KEY]"),

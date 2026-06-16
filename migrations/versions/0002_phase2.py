@@ -69,9 +69,7 @@ def upgrade() -> None:
     )
     op.add_column(
         "students",
-        sa.Column(
-            "has_hold", sa.Boolean, nullable=False, server_default=sa.text("false")
-        ),
+        sa.Column("has_hold", sa.Boolean, nullable=False, server_default=sa.text("false")),
     )
     op.add_column("students", sa.Column("hold_reason", sa.Text, nullable=True))
 
@@ -108,9 +106,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'detailed'"),
         ),
-        sa.Column(
-            "language", sa.Text, nullable=False, server_default=sa.text("'en'")
-        ),
+        sa.Column("language", sa.Text, nullable=False, server_default=sa.text("'en'")),
         sa.Column(
             "difficulty_preference",
             sa.Text,
@@ -162,8 +158,7 @@ def upgrade() -> None:
     )
     # GIN expression index for full-text retrieval (no stored tsvector column).
     op.execute(
-        "CREATE INDEX ix_rag_chunks_fts ON rag_chunks "
-        "USING gin(to_tsvector('english', content))"
+        "CREATE INDEX ix_rag_chunks_fts ON rag_chunks USING gin(to_tsvector('english', content))"
     )
 
     # 6. RLS on every new tenant-owned table (same policy as baseline).

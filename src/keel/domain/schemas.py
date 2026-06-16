@@ -58,12 +58,12 @@ class RagResult(BaseModel):
 
     chunk_id: str
     source: str
-    type: str       # "course" | "policy"
+    type: str  # "course" | "policy"
     content: str
-    score: float    # rerank relevance score or RRF score
-    code: str | None = None       # course code (if type == "course")
-    doc: str | None = None        # policy doc name (if type == "policy")
-    section: str | None = None    # policy section heading
+    score: float  # rerank relevance score or RRF score
+    code: str | None = None  # course code (if type == "course")
+    doc: str | None = None  # policy doc name (if type == "policy")
+    section: str | None = None  # policy section heading
     lang: str = "en"
 
 

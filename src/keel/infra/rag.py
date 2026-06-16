@@ -91,9 +91,7 @@ async def _dense_retrieve(
 ) -> list[dict[str, Any]]:
     emb_str = "[" + ",".join(str(v) for v in embedding) + "]"
     try:
-        result = await session.execute(
-            _DENSE_SQL, {"tid": tenant_id, "embedding": emb_str, "k": k}
-        )
+        result = await session.execute(_DENSE_SQL, {"tid": tenant_id, "embedding": emb_str, "k": k})
         rows = result.mappings().all()
         return [dict(r) for r in rows]
     except Exception as exc:
@@ -131,9 +129,7 @@ async def _sparse_retrieve(
     k: int,
 ) -> list[dict[str, Any]]:
     try:
-        result = await session.execute(
-            _SPARSE_SQL, {"tid": tenant_id, "query": query, "k": k}
-        )
+        result = await session.execute(_SPARSE_SQL, {"tid": tenant_id, "query": query, "k": k})
         rows = result.mappings().all()
         return [dict(r) for r in rows]
     except Exception as exc:

@@ -96,8 +96,7 @@ async def test_single_turn_no_tools() -> None:
     result = await compiled.ainvoke(initial, config={"configurable": {"thread_id": "t-1"}})
     assert result["iteration_count"] == 1
     assert any(
-        isinstance(m, AIMessage) and "degree" in m.content.lower()
-        for m in result["messages"]
+        isinstance(m, AIMessage) and "degree" in m.content.lower() for m in result["messages"]
     )
 
 
