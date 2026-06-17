@@ -154,7 +154,7 @@ def upgrade() -> None:
     )
     # Partial unique index: only one active plan per student.
     op.execute(
-        "CREATE UNIQUE INDEX uq_plans_one_active ON plans (student_id) WHERE is_active = true"
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_plans_one_active ON plans (student_id) WHERE is_active = true"
     )
 
     # ------------------------------------------------------------------
