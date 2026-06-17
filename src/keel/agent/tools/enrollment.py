@@ -107,9 +107,7 @@ def make_enrollment_tools(deps: AgentDeps) -> list[Any]:
                     session, tenant_id=tenant_id, section_ids=section_ids
                 )
                 if not valid:
-                    err = ToolError(
-                        error=reason, retryable=False, category="validation"
-                    )
+                    err = ToolError(error=reason, retryable=False, category="validation")
                     return err.model_dump_json()
 
                 payload = {"section_ids": section_ids, "student_id": student_id}
@@ -129,17 +127,19 @@ def make_enrollment_tools(deps: AgentDeps) -> list[Any]:
                 section_count=len(section_ids),
                 tenant_id=tenant_id,
             )
-            return json.dumps({
-                "action_id": str(action_id),
-                "type": "enrollment",
-                "status": "pending",
-                "section_ids": section_ids,
-                "message": (
-                    f"Enrollment staged for {len(section_ids)} section(s). "
-                    f"Action ID: {action_id}. "
-                    "The student must approve before any enrollment is written."
-                ),
-            })
+            return json.dumps(
+                {
+                    "action_id": str(action_id),
+                    "type": "enrollment",
+                    "status": "pending",
+                    "section_ids": section_ids,
+                    "message": (
+                        f"Enrollment staged for {len(section_ids)} section(s). "
+                        f"Action ID: {action_id}. "
+                        "The student must approve before any enrollment is written."
+                    ),
+                }
+            )
 
         except Exception as exc:
             _log.error("tool.stage_enrollment.error", error=str(exc))
@@ -198,20 +198,22 @@ def make_enrollment_tools(deps: AgentDeps) -> list[Any]:
             consent_note = (
                 "Approving this also gives consent to automatic enrollment when a seat "
                 "opens, if you are still eligible at that time."
-                if auto_enroll else
-                "You will be notified when a seat opens; no automatic enrollment."
+                if auto_enroll
+                else "You will be notified when a seat opens; no automatic enrollment."
             )
-            return json.dumps({
-                "action_id": str(action_id),
-                "type": "waitlist_join",
-                "status": "pending",
-                "section_id": section_id,
-                "auto_enroll": auto_enroll,
-                "message": (
-                    f"Waitlist join staged. Action ID: {action_id}. {consent_note} "
-                    "Approval required before any write."
-                ),
-            })
+            return json.dumps(
+                {
+                    "action_id": str(action_id),
+                    "type": "waitlist_join",
+                    "status": "pending",
+                    "section_id": section_id,
+                    "auto_enroll": auto_enroll,
+                    "message": (
+                        f"Waitlist join staged. Action ID: {action_id}. {consent_note} "
+                        "Approval required before any write."
+                    ),
+                }
+            )
 
         except Exception as exc:
             _log.error("tool.stage_waitlist_join.error", error=str(exc))
@@ -261,16 +263,18 @@ def make_enrollment_tools(deps: AgentDeps) -> list[Any]:
                     payload=payload,
                 )
 
-            return json.dumps({
-                "action_id": str(action_id),
-                "type": "waitlist_leave",
-                "status": "pending",
-                "section_id": section_id,
-                "message": (
-                    f"Waitlist removal staged. Action ID: {action_id}. "
-                    "Approval required before any write."
-                ),
-            })
+            return json.dumps(
+                {
+                    "action_id": str(action_id),
+                    "type": "waitlist_leave",
+                    "status": "pending",
+                    "section_id": section_id,
+                    "message": (
+                        f"Waitlist removal staged. Action ID: {action_id}. "
+                        "Approval required before any write."
+                    ),
+                }
+            )
 
         except Exception as exc:
             _log.error("tool.stage_waitlist_leave.error", error=str(exc))
@@ -298,8 +302,7 @@ async def _validate_sections(
     for section_id in section_ids:
         row = await session.execute(
             sa.text(
-                "SELECT capacity, enrolled FROM sections "
-                "WHERE id = :secid AND tenant_id = :tid"
+                "SELECT capacity, enrolled FROM sections WHERE id = :secid AND tenant_id = :tid"
             ),
             {"secid": str(section_id), "tid": str(tenant_id)},
         )

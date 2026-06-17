@@ -158,8 +158,7 @@ def send_outbox_event_job(
             async with session_factory() as session:
                 await session.execute(
                     sa.text(
-                        "UPDATE outbox SET processed = true, published_at = :now "
-                        "WHERE id = :oid"
+                        "UPDATE outbox SET processed = true, published_at = :now WHERE id = :oid"
                     ),
                     {"oid": outbox_id, "now": datetime.now(UTC)},
                 )
@@ -277,6 +276,7 @@ def capacity_sync_job() -> dict[str, int]:
                     # Just notify; no write.
                     async with session_factory() as session:
                         from keel.services.actions import outbox_write
+
                         await outbox_write(
                             session,
                             tenant_id=tenant_id,
@@ -324,6 +324,7 @@ def capacity_sync_job() -> dict[str, int]:
                             {"wid": str(waitlist_id), "tid": str(tenant_id)},
                         )
                         from keel.services.actions import outbox_write
+
                         await outbox_write(
                             session,
                             tenant_id=tenant_id,
@@ -389,8 +390,7 @@ async def _verify_eligibility_for_seat(
             # Capacity re-check.
             sec_row = await session.execute(
                 sa.text(
-                    "SELECT capacity, enrolled FROM sections "
-                    "WHERE id = :secid AND tenant_id = :tid"
+                    "SELECT capacity, enrolled FROM sections WHERE id = :secid AND tenant_id = :tid"
                 ),
                 {"secid": str(section_id), "tid": str(tenant_id)},
             )

@@ -68,7 +68,9 @@ def upgrade() -> None:
         sa.Column("type", sa.Text, nullable=False),
         # FROZEN approved payload. Execute node reads this; ignores LLM args after resume.
         sa.Column(
-            "payload", postgresql.JSONB, nullable=False,
+            "payload",
+            postgresql.JSONB,
+            nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),
         # pending → approved → executed | rejected | failed | expired
@@ -152,8 +154,7 @@ def upgrade() -> None:
     )
     # Partial unique index: only one active plan per student.
     op.execute(
-        "CREATE UNIQUE INDEX uq_plans_one_active "
-        "ON plans (student_id) WHERE is_active = true"
+        "CREATE UNIQUE INDEX uq_plans_one_active ON plans (student_id) WHERE is_active = true"
     )
 
     # ------------------------------------------------------------------

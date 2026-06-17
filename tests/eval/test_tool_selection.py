@@ -27,6 +27,7 @@ import yaml
 # Golden set (15 messages)
 # ---------------------------------------------------------------------------
 
+
 def _g(msg: str, tool: str | None, node: str) -> dict[str, Any]:
     return {"message": msg, "expected_tool": tool, "expected_node": node}
 
@@ -73,9 +74,19 @@ def _load_threshold() -> float:
 
 _STAGE_TOOL_NAMES = {"stage_enrollment", "stage_waitlist_join", "stage_waitlist_leave"}
 _ALL_TOOL_NAMES = {
-    "audit_degree", "rag_search", "predict_risk", "gpa_estimate", "simulate_whatif",
-    "propose_plan", "save_plan", "load_plan", "activate_plan", "swap_course",
-    "stage_enrollment", "stage_waitlist_join", "stage_waitlist_leave",
+    "audit_degree",
+    "rag_search",
+    "predict_risk",
+    "gpa_estimate",
+    "simulate_whatif",
+    "propose_plan",
+    "save_plan",
+    "load_plan",
+    "activate_plan",
+    "swap_course",
+    "stage_enrollment",
+    "stage_waitlist_join",
+    "stage_waitlist_leave",
 }
 
 
@@ -114,9 +125,7 @@ def test_tool_selection_golden_set_routing() -> None:
 def test_stage_tool_names_are_complete() -> None:
     """Stage tools must include all three write-path tools (no accidental omission)."""
     expected = {"stage_enrollment", "stage_waitlist_join", "stage_waitlist_leave"}
-    assert expected == _STAGE_TOOL_NAMES, (
-        f"Missing stage tool(s): {expected - _STAGE_TOOL_NAMES}"
-    )
+    assert expected == _STAGE_TOOL_NAMES, f"Missing stage tool(s): {expected - _STAGE_TOOL_NAMES}"
 
 
 def test_all_planning_tools_route_to_tools_node() -> None:

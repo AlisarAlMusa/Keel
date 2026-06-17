@@ -45,6 +45,7 @@ _SYSTEM_PROMPT_VERSION = "v2"
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 
+
 def _load_prompt_template(version: str) -> str:
     """Load system prompt from agent/prompts/system_{version}.md at import time."""
     path = _PROMPTS_DIR / f"system_{version}.md"
@@ -52,6 +53,7 @@ def _load_prompt_template(version: str) -> str:
     # Strip comment lines (lines starting with #) so they don't reach the LLM.
     lines = [line for line in text.splitlines() if not line.startswith("#")]
     return "\n".join(lines).strip()
+
 
 _SYSTEM_PROMPT_TEMPLATE = _load_prompt_template(_SYSTEM_PROMPT_VERSION)
 _SESSION_KEY_PREFIX = "session"
@@ -105,7 +107,7 @@ async def _load_session_history(
     try:
         raw = await redis.get(key)
         if raw:
-            return cast(list[dict[str, Any]], json.loads(raw))[-_SESSION_N * 2:]
+            return cast(list[dict[str, Any]], json.loads(raw))[-_SESSION_N * 2 :]
     except Exception as exc:
         _log.warning("agent.session_load_failed", error=str(exc))
     return []
@@ -275,9 +277,7 @@ def build_agent(
             resume_payload.get("action_id") if isinstance(resume_payload, dict) else None
         )
         if not action_id_str:
-            return {
-                "messages": [AIMessage(content="No action to execute.")]
-            }
+            return {"messages": [AIMessage(content="No action to execute.")]}
 
         if isinstance(resume_payload, dict) and resume_payload.get("rejected"):
             return {
@@ -305,9 +305,7 @@ def build_agent(
                 action = await _AR.get(session, UUID(action_id_str))
 
                 if not action:
-                    return {
-                        "messages": [AIMessage(content=f"Action {action_id_str} not found.")]
-                    }
+                    return {"messages": [AIMessage(content=f"Action {action_id_str} not found.")]}
 
                 if str(action["status"]) != "approved":
                     _log.warning(
@@ -365,9 +363,9 @@ def build_agent(
     graph = StateGraph(AgentState)
     graph.add_node("llm", llm_node)
     graph.add_node("tools", ToolNode(tools))
-    graph.add_node("stage", ToolNode(tools))   # runs stage_* tool then suspends
-    graph.add_node("interrupt", stage_node)     # suspends graph; human approves
-    graph.add_node("execute", execute_node)     # post-approval write
+    graph.add_node("stage", ToolNode(tools))  # runs stage_* tool then suspends
+    graph.add_node("interrupt", stage_node)  # suspends graph; human approves
+    graph.add_node("execute", execute_node)  # post-approval write
 
     graph.set_entry_point("llm")
     graph.add_conditional_edges(
@@ -376,9 +374,9 @@ def build_agent(
         {"tools": "tools", "stage": "stage", END: END},
     )
     graph.add_edge("tools", "llm")
-    graph.add_edge("stage", "interrupt")     # after stage_* tool runs, interrupt
-    graph.add_edge("interrupt", "execute")   # after human approves, execute
-    graph.add_edge("execute", "llm")         # agent continues after write
+    graph.add_edge("stage", "interrupt")  # after stage_* tool runs, interrupt
+    graph.add_edge("interrupt", "execute")  # after human approves, execute
+    graph.add_edge("execute", "llm")  # agent continues after write
 
     return graph.compile(checkpointer=checkpointer, interrupt_before=["interrupt"])
 

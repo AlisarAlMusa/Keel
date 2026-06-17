@@ -68,9 +68,15 @@ _STUB_LABELS = {
 # Labels that go directly to the agent (not stubs, not direct-LLM).
 # Phase 3: whatif, predict, plans_manage, register, waitlist, petition all have agent tools.
 _AGENT_LABELS = {
-    "plan", "advise", "audit",
-    "whatif", "predict", "plans_manage",
-    "register", "waitlist", "petition",
+    "plan",
+    "advise",
+    "audit",
+    "whatif",
+    "predict",
+    "plans_manage",
+    "register",
+    "waitlist",
+    "petition",
 }
 
 # Labels that use the lite LLM directly.
@@ -139,7 +145,8 @@ async def _handle_lite(
         content = result.content
         if isinstance(content, list):
             text = " ".join(
-                b.get("text", "") for b in content
+                b.get("text", "")
+                for b in content
                 if isinstance(b, dict) and b.get("type") == "text"
             ).strip()
         else:

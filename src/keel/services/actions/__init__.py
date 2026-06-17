@@ -121,10 +121,7 @@ class ActionRepo:
     async def set_failed(session: AsyncSession, action_id: UUID) -> None:
         """Transition approved → failed (e.g. re-validation failed on resume)."""
         await session.execute(
-            sa.text(
-                "UPDATE actions SET status = 'failed', decided_at = :now "
-                "WHERE id = :aid"
-            ),
+            sa.text("UPDATE actions SET status = 'failed', decided_at = :now WHERE id = :aid"),
             {"aid": str(action_id), "now": datetime.now(UTC)},
         )
 

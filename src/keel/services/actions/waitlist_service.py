@@ -140,9 +140,11 @@ async def join_waitlist_tx(
         waitlist_id=waitlist_id,
         message=(
             f"You are #{position} on the waitlist. "
-            + ("You will be automatically enrolled when a seat opens, if you are still eligible."
-               if auto_enroll else
-               "You will be notified when a seat opens.")
+            + (
+                "You will be automatically enrolled when a seat opens, if you are still eligible."
+                if auto_enroll
+                else "You will be notified when a seat opens."
+            )
         ),
     )
 
@@ -255,9 +257,7 @@ async def fulfill_waitlist_tx(
 
     # Mark waitlist entry fulfilled.
     await session.execute(
-        sa.text(
-            "UPDATE waitlist SET status = 'fulfilled' WHERE id = :wid AND tenant_id = :tid"
-        ),
+        sa.text("UPDATE waitlist SET status = 'fulfilled' WHERE id = :wid AND tenant_id = :tid"),
         {"wid": str(waitlist_id), "tid": str(tenant_id)},
     )
 
@@ -291,6 +291,4 @@ async def fulfill_waitlist_tx(
         student_id=str(student_id),
         section_id=str(section_id),
     )
-    return WaitlistResult(
-        success=True, waitlist_id=waitlist_id, message="Enrolled from waitlist."
-    )
+    return WaitlistResult(success=True, waitlist_id=waitlist_id, message="Enrolled from waitlist.")

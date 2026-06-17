@@ -143,7 +143,6 @@ async def execute_enrollment_tx(
         success=True,
         enrollment_ids=enrollment_ids,
         message=(
-            f"Enrolled in {len(enrollment_ids)} section(s). "
-            "A confirmation email is on its way."
+            f"Enrolled in {len(enrollment_ids)} section(s). A confirmation email is on its way."
         ),
     )

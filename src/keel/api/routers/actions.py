@@ -119,9 +119,7 @@ async def approve_action(
                 requesting_student=current_user.student_id,
                 tenant_id=current_user.tenant_id,
             )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="Not your action."
-            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your action.")
 
         # ---- Status guard -----------------------------------------------
         if action["status"] != "pending":
@@ -194,9 +192,7 @@ async def reject_action(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found.")
 
         if str(action["student_id"]) != current_user.student_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail="Not your action."
-            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your action.")
 
         if action["status"] != "pending":
             raise HTTPException(

@@ -221,9 +221,7 @@ class Plan(Base):
     )
     validated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     # Phase 3: one-active-plan (partial unique index in migration) + catalog change detection.
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false")
-    )
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     catalog_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = _created_at()
 
@@ -257,9 +255,7 @@ class Waitlist(Base):
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     # Phase 3 MVP: delegated-consent auto-enroll flag + lifecycle status.
-    auto_enroll: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false")
-    )
+    auto_enroll: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     # waiting | fulfilled | failed | left
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'waiting'"))
     created_at: Mapped[datetime] = _created_at()
@@ -294,9 +290,7 @@ class Outbox(Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    processed: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false")
-    )
+    processed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     created_at: Mapped[datetime] = _created_at()
 

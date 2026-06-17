@@ -141,9 +141,7 @@ async def test_frozen_payload_ignores_llm_args() -> None:
         "keel.services.actions.enrollment.execute_enrollment_tx",
         new=fake_execute_tx,
     ):
-        with patch(
-            "keel.agent.tools.advising._load_student_data", new=AsyncMock(return_value={})
-        ):
+        with patch("keel.agent.tools.advising._load_student_data", new=AsyncMock(return_value={})):
             with patch(
                 "keel.agent.tools.advising._build_engine_objects",
                 return_value=([], {}, None, {}, None),
@@ -326,8 +324,7 @@ async def _simulate_execute_node(
 
             if str(action["status"]) != "approved":
                 return (
-                    f"I can only execute an approved action. "
-                    f"This action is '{action['status']}'."
+                    f"I can only execute an approved action. This action is '{action['status']}'."
                 )
 
             return f"Would execute {action['type']} action."

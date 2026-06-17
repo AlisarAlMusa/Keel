@@ -502,9 +502,7 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
 
             from keel.domain.models import Term as _Term
 
-            transcript, catalog, _, _, _ = _build_engine_objects(
-                data, _Term.FALL, 2025
-            )
+            transcript, catalog, _, _, _ = _build_engine_objects(data, _Term.FALL, 2025)
 
             # Compute current GPA from transcript.
             graded = [t for t in transcript if t.grade is not None]
@@ -530,7 +528,9 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
             )
             result = await deps.llm_agent.ainvoke(
                 [
-                    SystemMessage(content="You are an academic advisor giving a rough GPA estimate."),  # noqa: E501
+                    SystemMessage(
+                        content="You are an academic advisor giving a rough GPA estimate."
+                    ),  # noqa: E501
                     HumanMessage(content=prompt),
                 ]
             )

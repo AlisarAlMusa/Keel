@@ -285,12 +285,14 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                     if pred:
                         risk_summary = f"{pred.label} ({pred.score:.0%})"
 
-                scored.append({
-                    "plan": plan,
-                    "workload": workload_band,
-                    "label": label,
-                    "risk": risk_summary,
-                })
+                scored.append(
+                    {
+                        "plan": plan,
+                        "workload": workload_band,
+                        "label": label,
+                        "risk": risk_summary,
+                    }
+                )
 
             # LLM ranks + explains using feasibility + risk + workload.
             ranking = await _llm_rank(
@@ -502,11 +504,13 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                     },
                 )
 
-            return json.dumps({
-                "plan_id": str(plan_db_id),
-                "name": plan_name,
-                "message": f"Plan '{plan_name}' saved (engine-verified ✓). Plan ID: {plan_db_id}.",
-            })
+            return json.dumps(
+                {
+                    "plan_id": str(plan_db_id),
+                    "name": plan_name,
+                    "message": f"Plan '{plan_name}' saved (engine-verified ✓). Plan ID: {plan_db_id}.",
+                }
+            )
 
         except Exception as exc:
             _log.error("tool.save_plan.error", error=str(exc))
@@ -743,8 +747,7 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                 )
 
             return (
-                f"Swapped {remove_code} → {add_code} in {term.title()} {year}. "
-                "Plan re-verified ✓."
+                f"Swapped {remove_code} → {add_code} in {term.title()} {year}. Plan re-verified ✓."
             )
 
         except Exception as exc:
@@ -814,6 +817,7 @@ async def _llm_propose_multi(
             candidates = json.loads(text)
         except json.JSONDecodeError:
             import ast
+
             candidates = ast.literal_eval(text)
         if isinstance(candidates, list):
             return candidates[:_MAX_CANDIDATES]
@@ -885,6 +889,7 @@ async def _validate_with_repair(
                 parsed = json.loads(text)
             except json.JSONDecodeError:
                 import ast
+
                 parsed = ast.literal_eval(text)
             new_codes = parsed.get("courses", [])
             if new_codes:
