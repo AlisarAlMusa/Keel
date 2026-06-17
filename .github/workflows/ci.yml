@@ -111,12 +111,12 @@ jobs:
       - name: Apply migrations
         run: docker compose exec -T api uv run alembic upgrade head
 
-      - name: Verify RLS policies (expect 19)
+      - name: Verify RLS policies (expect 20)
         run: |
           n=$(docker compose exec -T db psql -U keel_app -d keel -tAc \
             "SELECT count(*) FROM pg_policies WHERE policyname='tenant_isolation'")
           echo "tenant_isolation policies: $n"
-          test "$n" = "19"
+          test "$n" = "20"
 
       - name: Run integration tests against the stack DB
         env:

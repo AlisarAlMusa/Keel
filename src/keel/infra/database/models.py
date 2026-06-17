@@ -270,6 +270,9 @@ class RequestQueue(Base):
         PG_UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False
     )
     type: Mapped[str] = mapped_column(Text, nullable=False)
+    # Phase 4: the entity the request targets (program_id, course_code, …) + idempotency.
+    target: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
@@ -415,6 +418,24 @@ class Action(Base):
     )
 
 
+class Advisor(Base):
+    """F4 escalation routing reference (spec §4) — NOT an auth principal.
+
+    No role, no login, no permissions. The escalate tool resolves a target email
+    from this table by program/department; null program = the tenant's catch-all.
+    RLS-scoped by tenant_id like every other tenant-owned table.
+    """
+
+    __tablename__ = "advisors"
+
+    id: Mapped[UUID] = _pk()
+    tenant_id: Mapped[UUID] = _tenant_fk()
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    program: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = _created_at()
+
+
 # Tables that carry tenant-owned data and therefore receive RLS in the migration.
 TENANT_OWNED_TABLES: tuple[str, ...] = (
     "users",
@@ -438,4 +459,6 @@ TENANT_OWNED_TABLES: tuple[str, ...] = (
     "rag_chunks",
     # Phase 3 additions
     "actions",
+    # Phase 4 additions
+    "advisors",
 )

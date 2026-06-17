@@ -31,6 +31,7 @@ from keel.config import get_settings
 from keel.infra import database as db_infra
 from keel.infra import storage as storage_infra
 from keel.infra.database.models import (
+    Advisor,
     Corequisite,
     Course,
     Prerequisite,
@@ -565,6 +566,23 @@ _TENANTS: list[dict[str, str]] = [
 ]
 
 # ---------------------------------------------------------------------------
+# Advisors (Phase 4 — F4 escalation routing reference; NOT auth principals)
+# program=None is the tenant catch-all when no program-specific advisor matches.
+# ---------------------------------------------------------------------------
+
+_ADVISORS: dict[str, list[dict[str, Any]]] = {
+    "northane": [
+        {"name": "Dr. Lena Park", "email": "advising-cs@northane.edu", "program": "BSCS"},
+        {"name": "Dr. Omar Reyes", "email": "advising-ds@northane.edu", "program": "BSDS"},
+        {"name": "Northane Advising Office", "email": "advising@northane.edu", "program": None},
+    ],
+    "summit": [
+        {"name": "Dr. Maya Cohen", "email": "advising-cs@summit.edu", "program": "BSCS"},
+        {"name": "Summit Advising Office", "email": "advising@summit.edu", "program": None},
+    ],
+}
+
+# ---------------------------------------------------------------------------
 # Per-tenant section overrides (§9.5)
 # ---------------------------------------------------------------------------
 
@@ -816,6 +834,17 @@ async def _seed_tenant(
                 slots=_TERM_SLOTS[code_to_idx[c["code"]] % len(_TERM_SLOTS)],
                 capacity=30,
                 enrolled=enrolled,
+            )
+        )
+
+    # Advisors (Phase 4 — F4 routing reference).
+    for adv in _ADVISORS.get(slug, []):
+        session.add(
+            Advisor(
+                tenant_id=tenant_id,
+                name=adv["name"],
+                email=adv["email"],
+                program=adv["program"],
             )
         )
 
