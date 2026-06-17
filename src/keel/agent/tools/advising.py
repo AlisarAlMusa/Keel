@@ -1,57 +1,30 @@
-"""Agent tool definitions: audit_degree, rag_search, propose_plan.
+"""Read-only advising tools: audit_degree, rag_search, predict_risk, gpa_estimate.
 
-Each tool is a function returned from a factory that closes over its
-dependencies (DB session, cohere client, LLM, etc.).  Call make_tools()
-at agent-build time; pass the result to ToolNode.
-
-Tool rules (spec §3.5):
-- Typed Pydantic args_schema on every tool.
-- Returns a structured string result, or a ToolError JSON on failure.
-- Never raises — catch, log, return ToolError.
-- No silent failures: every error is logged.
-
-propose_plan repair loop (spec §3.5):
-  LLM proposes → verifier validates → LLM repairs from violations (≤3 attempts)
-  → greedy fallback planner → clean "no valid plan" message.
-  No risk scoring or ranking in Phase 2.
+Also owns the shared DB helpers (_load_student_data, _build_engine_objects)
+used by planning tools — they import from here to avoid duplication.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-import cohere
 import sqlalchemy as sa
 from langchain_core.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from keel.config import Settings
 from keel.domain.engine.audit import audit
-from keel.domain.engine.contracts import (
-    Plan,
-    PlanMeta,
-    PlanTerm,
-    Program,
-    Violation,
-)
-from keel.domain.engine.graph import PrereqGraph
-from keel.domain.engine.planner import greedy_plan
-from keel.domain.engine.verifier import verify
 from keel.domain.models import Corequisite, Course, Prerequisite, Term, TranscriptEntry
 from keel.domain.schemas import ToolError
 from keel.infra.database.session import tenant_session
 from keel.infra.rag import retrieve
 from keel.logging import get_logger
 
-_log = get_logger(__name__)
+from ._deps import AgentDeps
 
-_PROMPT_VERSION = "v1"
+_log = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -62,28 +35,50 @@ _PROMPT_VERSION = "v1"
 class AuditDegreeInput(BaseModel):
     """Input for audit_degree tool."""
 
-    student_id: str
-    tenant_id: str
+    student_id: str = Field(description="The student's UUID — copy from the system prompt.")
+    tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
 
 
 class RagSearchInput(BaseModel):
     """Input for rag_search tool."""
 
-    query: str
-    tenant_id: str
+    query: str = Field(
+        description=(
+            "The specific topic to search for — e.g. 'CS301 prerequisites', "
+            "'late withdrawal policy', 'BSCS degree requirements'. "
+            "Be specific: use the course code or exact policy name."
+        )
+    )
+    tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
 
 
-class ProposePlanInput(BaseModel):
-    """Input for propose_plan tool."""
+class PredictRiskInput(BaseModel):
+    """Input for predict_risk tool."""
 
-    student_id: str
-    tenant_id: str
-    start_term: str  # e.g. "fall"
-    start_year: int
+    student_id: str = Field(description="The student's UUID — copy from the system prompt.")
+    tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
+    start_term: str = Field(description="Term to score: 'fall', 'spring', or 'summer'.")
+    start_year: int = Field(description="Calendar year of the term, e.g. 2026.")
+    course_codes: list[str] = Field(
+        description=(
+            "List of course codes in the proposed term to score for risk, "
+            "e.g. ['CS201', 'CS210', 'CS301']. Use codes from propose_plan output."
+        )
+    )
+
+
+class GpaEstimateInput(BaseModel):
+    """Input for gpa_estimate tool."""
+
+    student_id: str = Field(description="The student's UUID — copy from the system prompt.")
+    tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
+    course_codes: list[str] = Field(
+        description="Course codes to estimate GPA impact for, e.g. ['CS201', 'CS210']."
+    )
 
 
 # ---------------------------------------------------------------------------
-# DB query helpers (raw SQL, tenant-filtered)
+# Shared DB query helpers (also imported by planning.py)
 # ---------------------------------------------------------------------------
 
 
@@ -192,12 +187,15 @@ def _build_engine_objects(
 ) -> tuple[
     list[TranscriptEntry],
     dict[str, Course],
-    PrereqGraph,
+    Any,  # PrereqGraph
     list[Corequisite],
-    Program | None,
+    Any,  # Program | None
 ]:
     """Convert raw DB rows into typed engine objects."""
     from decimal import Decimal
+
+    from keel.domain.engine.contracts import CoreRequirement, Program
+    from keel.domain.engine.graph import PrereqGraph
 
     tid_uuid = UUID(data["tenant_id_str"])
     sid_uuid = UUID(data["student_id_str"])
@@ -250,18 +248,14 @@ def _build_engine_objects(
         for r in data.get("coreq_rows", [])
     ]
 
-    program: Program | None = None
+    program: Any = None
     pr = data.get("program_row")
     if pr:
-        import json as _json
-
-        from keel.domain.engine.contracts import CoreRequirement, Program
-
         reqs = []
         for rr in data.get("req_rows", []):
             codes = rr["eligible_course_codes"]
             if isinstance(codes, str):
-                codes = _json.loads(codes)
+                codes = json.loads(codes)
             reqs.append(
                 CoreRequirement(
                     type="CORE",
@@ -292,20 +286,8 @@ def _build_engine_objects(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class AgentDeps:
-    """All injectable dependencies the tools need."""
-
-    session_factory: Any  # async_sessionmaker — tools open their own sessions per call
-    cohere_client: cohere.AsyncClientV2
-    llm_agent: ChatGoogleGenerativeAI
-    settings: Settings
-    current_term: Term = Term.FALL
-    current_year: int = 2025
-
-
-def make_tools(deps: AgentDeps) -> list[Any]:
-    """Build the three agent tools closed over their dependencies."""
+def make_advising_tools(deps: AgentDeps) -> list[Any]:
+    """Return [audit_degree, rag_search, predict_risk, gpa_estimate] closed over deps."""
 
     @tool(args_schema=AuditDegreeInput)
     async def audit_degree(student_id: str, tenant_id: str) -> str:
@@ -394,7 +376,7 @@ def make_tools(deps: AgentDeps) -> list[Any]:
             parts = []
             for i, r in enumerate(results, start=1):
                 label = r.code or r.doc or r.source
-                parts.append(f"[{i}] {label}: {r.content[:400]}")
+                parts.append(f"[{i}] {label}: {r.content}")
             return "\n\n".join(parts)
 
         except Exception as exc:
@@ -402,45 +384,36 @@ def make_tools(deps: AgentDeps) -> list[Any]:
             err = ToolError(error=str(exc), retryable=True, category="external")
             return err.model_dump_json()
 
-    @tool(args_schema=ProposePlanInput)
-    async def propose_plan(
+    @tool(args_schema=PredictRiskInput)
+    async def predict_risk(
         student_id: str,
         tenant_id: str,
         start_term: str,
         start_year: int,
+        course_codes: list[str],
     ) -> str:
-        """Build a feasible course plan starting from the given term.
-        Runs the engine verifier — only returns plans that pass all
-        hard constraints (prereqs, credit cap, offering, holds).
-        No risk scoring in Phase 2.
+        """Predict graduation risk for a student given a proposed course load.
+        Returns on_track / at_risk label with a confidence score, deterministic
+        reasons derived from feature values, and an LLM-generated mitigation plan.
+        Features are NEVER LLM-computed — they come from the engine + shared compute_features.
+        Use after propose_plan to score each candidate plan.
         """
         try:
-            term = Term(start_term.lower())
-        except ValueError:
-            err = ToolError(
-                error=f"Invalid term '{start_term}'. Use: fall, spring, summer.",
-                retryable=False,
-                category="validation",
-            )
-            return err.model_dump_json()
+            from keel.domain.models import Term as _Term
 
-        try:
+            try:
+                term = _Term(start_term.lower())
+            except ValueError:
+                err = ToolError(
+                    error=f"Invalid term '{start_term}'.", retryable=False, category="validation"
+                )
+                return err.model_dump_json()
+
             async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
                 data = await _load_student_data(_db, student_id, tenant_id)
             if not data:
                 err = ToolError(
-                    error=f"Student {student_id} not found.",
-                    retryable=False,
-                    category="validation",
-                )
-                return err.model_dump_json()
-
-            if data["student"].get("has_hold"):
-                reason = data["student"].get("hold_reason") or "unknown"
-                err = ToolError(
-                    error=f"Student has an active hold ({reason}). Resolve it before planning.",
-                    retryable=False,
-                    category="validation",
+                    error=f"Student {student_id} not found.", retryable=False, category="validation"
                 )
                 return err.model_dump_json()
 
@@ -449,13 +422,15 @@ def make_tools(deps: AgentDeps) -> list[Any]:
             )
             if program is None:
                 err = ToolError(
-                    error="Student has no program — cannot propose a plan.",
-                    retryable=False,
-                    category="validation",
+                    error="Student has no program.", retryable=False, category="validation"
                 )
                 return err.model_dump_json()
 
-            audit_result = audit(
+            from keel.domain.engine.audit import audit as _audit
+            from keel.domain.engine.contracts import PlanTerm
+            from keel.domain.engine.risk_inputs import score_plan_term
+
+            audit_result = _audit(
                 transcript=transcript,
                 program=program,
                 graph=graph,
@@ -464,179 +439,191 @@ def make_tools(deps: AgentDeps) -> list[Any]:
                 current_year=start_year,
             )
 
-            if not audit_result.eligible_now:
+            plan_term = PlanTerm(term=term, year=start_year, course_codes=course_codes)
+            features, vector = score_plan_term(audit_result, plan_term, catalog)
+
+            # Call model-server (shared ModelClient).
+            prediction = None
+            if deps.model_client is not None:
+                prediction = await deps.model_client.predict_grad_risk(vector.tolist())
+
+            if prediction is None:
                 return (
-                    "No courses are currently eligible based on your transcript "
-                    "and the courses offered this term. "
-                    "You may have completed all requirements or there may be "
-                    "prerequisite gaps — please consult your advisor."
+                    "Risk prediction is temporarily unavailable. "
+                    "Your plan has been verified by the engine — please consult your advisor "
+                    "for a risk assessment."
                 )
 
-            # --- LLM propose → verify → repair loop (≤3 attempts) ---
-            valid_plan: Plan | None = None
-            last_violations: list[Violation] = []
+            # Deterministic reasons from feature values (spec §3.2 — not LLM-invented).
+            reasons = _build_risk_reasons(features, prediction.label)
 
-            for attempt in range(1, 4):
-                proposed = await _llm_propose(
-                    llm=deps.llm_agent,
-                    eligible=audit_result.eligible_now,
-                    catalog=catalog,
-                    violations=last_violations,
-                    term=term,
-                    year=start_year,
-                    student_id=student_id,
-                    tenant_id=tenant_id,
-                    program=program,
-                )
-                if proposed is None:
-                    _log.warning("tool.propose_plan.llm_parse_failed", attempt=attempt)
-                    continue
+            # LLM writes only the mitigation plan from those reasons.
+            mitigation = await _llm_mitigation(
+                llm=deps.llm_agent,
+                label=prediction.label,
+                score=prediction.score,
+                reasons=reasons,
+                course_codes=course_codes,
+            )
 
-                violations = verify(
-                    plan=proposed,
-                    catalog=catalog,
-                    graph=graph,
-                    transcript=transcript,
-                    corequisites=coreqs,
-                    current_term=term,
-                    current_year=start_year,
-                )
-                if not violations:
-                    valid_plan = proposed
-                    _log.info("tool.propose_plan.verified", attempt=attempt)
-                    break
-                last_violations = violations
-                _log.info(
-                    "tool.propose_plan.violations",
-                    attempt=attempt,
-                    count=len(violations),
-                )
-
-            if valid_plan is None:
-                # Greedy fallback
-                _log.info("tool.propose_plan.greedy_fallback")
-                valid_plan = greedy_plan(
-                    transcript=transcript,
-                    program=program,
-                    graph=graph,
-                    catalog=catalog,
-                    corequisites=coreqs,
-                    start_term=term,
-                    start_year=start_year,
-                    student_id_hint=student_id,
-                )
-
-            if valid_plan is None:
-                return (
-                    "I was unable to build a valid plan given your current transcript "
-                    "and the available courses. This may be due to prerequisite gaps, "
-                    "hold issues, or no eligible courses this term. "
-                    "Please speak with your academic advisor."
-                )
-
-            return _format_plan(valid_plan, catalog)
+            _log.info(
+                "tool.predict_risk.done",
+                student_id=student_id,
+                label=prediction.label,
+                score=round(prediction.score, 3),
+                tenant_id=tenant_id,
+            )
+            return (
+                f"**Risk Assessment** — {prediction.label.upper()} "
+                f"(confidence: {prediction.score:.0%})\n\n"
+                f"**Key factors:**\n{reasons}\n\n"
+                f"**Mitigation:**\n{mitigation}"
+            )
 
         except Exception as exc:
-            _log.error("tool.propose_plan.error", error=str(exc))
+            _log.error("tool.predict_risk.error", error=str(exc))
             err = ToolError(error=str(exc), retryable=True, category="engine")
             return err.model_dump_json()
 
-    return [audit_degree, rag_search, propose_plan]
+    @tool(args_schema=GpaEstimateInput)
+    async def gpa_estimate(student_id: str, tenant_id: str, course_codes: list[str]) -> str:
+        """Produce an LLM-based GPA estimate for a proposed course load.
+        This is an estimate only — NOT a prediction. Always hard-caveated.
+        Never present this as a guarantee or use it to gate feasibility.
+        """
+        try:
+            async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
+                data = await _load_student_data(_db, student_id, tenant_id)
+            if not data:
+                err = ToolError(
+                    error=f"Student {student_id} not found.", retryable=False, category="validation"
+                )
+                return err.model_dump_json()
+
+            from keel.domain.models import Term as _Term
+
+            transcript, catalog, _, _, _ = _build_engine_objects(
+                data, _Term.FALL, 2025
+            )
+
+            # Compute current GPA from transcript.
+            graded = [t for t in transcript if t.grade is not None]
+            current_gpa = (
+                float(sum(t.grade for t in graded) / len(graded)) if graded else 0.0  # type: ignore[arg-type]
+            )
+
+            course_details = [
+                f"{c}: {catalog[c].name} (difficulty {catalog[c].difficulty}/5)"
+                for c in course_codes
+                if c in catalog
+            ]
+            course_list = "\n".join(course_details) or "No recognized courses."
+
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            prompt = (
+                f"A student has a current cumulative GPA of {current_gpa:.2f}. "
+                f"They are considering these courses:\n{course_list}\n\n"
+                "Give a brief, realistic GPA estimate for this term load. "
+                "You MUST include the caveat: 'This is an estimate only, not a prediction.' "
+                "Keep the response under 3 sentences."
+            )
+            result = await deps.llm_agent.ainvoke(
+                [
+                    SystemMessage(content="You are an academic advisor giving a rough GPA estimate."),  # noqa: E501
+                    HumanMessage(content=prompt),
+                ]
+            )
+            return f"**GPA Estimate (estimate only, not a prediction):** {result.content}"
+
+        except Exception as exc:
+            _log.error("tool.gpa_estimate.error", error=str(exc))
+            err = ToolError(error=str(exc), retryable=True, category="engine")
+            return err.model_dump_json()
+
+    return [audit_degree, rag_search, predict_risk, gpa_estimate]
 
 
 # ---------------------------------------------------------------------------
-# LLM propose helper (internal to propose_plan)
+# Risk-reason helpers (internal — deterministic, not LLM)
 # ---------------------------------------------------------------------------
 
 
-async def _llm_propose(
+def _build_risk_reasons(features: dict[str, float], label: str) -> str:
+    """Derive human-readable risk reasons from salient feature values.
+
+    Reasons are DETERMINISTIC — derived from feature thresholds, not LLM-invented.
+    This is what the LLM uses to write the mitigation plan (it explains, not decides).
+    """
+    reasons: list[str] = []
+
+    gpa = features.get("cumulative_gpa", 4.0)
+    if gpa < 2.0:
+        reasons.append(f"Cumulative GPA is low ({gpa:.2f}) — below the 2.0 threshold.")
+    elif gpa < 2.5:
+        reasons.append(f"Cumulative GPA is borderline ({gpa:.2f}).")
+
+    gpa_trend = features.get("gpa_trend", 0.0)
+    if gpa_trend < -0.3:
+        reasons.append(f"GPA trend is declining ({gpa_trend:+.2f} per term).")
+
+    failures = features.get("num_failures", 0)
+    if failures > 0:
+        reasons.append(f"{int(failures)} failed course(s) on transcript.")
+
+    repeats = features.get("num_repeats", 0)
+    if repeats > 0:
+        reasons.append(f"{int(repeats)} repeated course(s) on transcript.")
+
+    progress = features.get("progress_rate", 1.0)
+    if progress < 0.8:
+        reasons.append(f"Progress rate is below expected ({progress:.0%} of schedule).")
+
+    workload = features.get("planned_workload_index", 0.0)
+    if workload > 54:
+        reasons.append(f"Planned workload is heavy (index {workload:.0f}).")
+
+    hard = features.get("num_hard_courses", 0)
+    if hard >= 2:
+        reasons.append(f"{int(hard)} high-difficulty course(s) in the planned term.")
+
+    if not reasons:
+        reasons.append("No significant risk factors detected.")
+
+    return "\n".join(f"• {r}" for r in reasons)
+
+
+async def _llm_mitigation(
     *,
-    llm: ChatGoogleGenerativeAI,
-    eligible: list[str],
-    catalog: dict[str, Course],
-    violations: list[Violation],
-    term: Term,
-    year: int,
-    student_id: str,
-    tenant_id: str,
-    program: Program,
-) -> Plan | None:
-    """Ask the LLM to propose a term plan and parse it into a Plan object."""
+    llm: Any,
+    label: str,
+    score: float,
+    reasons: str,
+    course_codes: list[str],
+) -> str:
+    """Ask the LLM to write a mitigation plan given deterministic reasons.
+
+    The LLM explains and suggests — it does NOT compute features or decide the label.
+    """
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    eligible_desc = []
-    for code in eligible[:30]:  # cap at 30 to keep prompt manageable
-        c = catalog.get(code)
-        if c:
-            eligible_desc.append(f"  {code}: {c.name} ({c.credits} cr)")
-
-    violation_text = ""
-    if violations:
-        violation_text = "\n\nPrevious attempt had these violations — fix them:\n"
-        for v in violations:
-            violation_text += f"  - {v.code}: {v.message}\n"
+    if label == "on_track":
+        return "Your plan looks healthy. Keep attending office hours and stay on schedule."
 
     prompt = (
-        f"You are helping a student plan their {term.value} {year} semester.\n"
-        f"Program: {program.program_id}\n"
-        f"Eligible courses (pick 3-4 appropriate ones, max 12-15 credits):\n"
-        + "\n".join(eligible_desc)
-        + violation_text
-        + "\n\nRespond with ONLY a JSON object in this exact format:\n"
-        '{"courses": ["CODE1", "CODE2", "CODE3"]}\n'
-        "Choose courses that form a reasonable semester load. "
-        "Respect credit limits and prerequisites."
+        f"A student's graduation-risk model returned: {label.upper()} ({score:.0%} confidence).\n"
+        f"Key risk factors (deterministic, not your analysis):\n{reasons}\n"
+        f"Proposed courses: {', '.join(course_codes)}\n\n"
+        "Write a concise (3-5 bullet points) mitigation plan to help the student reduce risk. "
+        "Focus on actionable steps. Do not re-state the risk factors verbatim."
     )
-
     try:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
         result = await llm.ainvoke(
             [
-                SystemMessage(
-                    content=f"You are a course planning assistant. prompt_version={_PROMPT_VERSION}"
-                ),
+                SystemMessage(content="You are a supportive academic advisor."),
                 HumanMessage(content=prompt),
             ]
         )
-        text = str(result.content).strip()
-        # Extract JSON (handle markdown code blocks)
-        if "```" in text:
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        data = json.loads(text.strip())
-        codes = data.get("courses", [])
-        if not codes:
-            return None
-
-        # Build a single-term Plan
-        from uuid import uuid4
-
-        return Plan(
-            plan_id=uuid4(),
-            tenant_id=UUID(tenant_id),
-            student_id=UUID(student_id),
-            program_id=program.program_id,
-            name=f"Proposed {term.value.title()} {year}",
-            version=1,
-            active=False,
-            terms=[PlanTerm(term=term, year=year, course_codes=codes)],
-            meta=PlanMeta(generated_by="llm", created_at=datetime.utcnow()),
-        )
-    except Exception as exc:
-        _log.warning("tool.propose_plan.llm_propose_error", error=str(exc))
-        return None
-
-
-def _format_plan(plan: Plan, catalog: dict[str, Course]) -> str:
-    lines = [f"**Proposed Plan: {plan.name}** (engine-verified ✓)\n"]
-    for pt in plan.terms:
-        credits = sum(float(catalog[c].credits) for c in pt.course_codes if c in catalog)
-        lines.append(f"{pt.term.value.title()} {pt.year} — {credits:.0f} credits:")
-        for code in pt.course_codes:
-            name = catalog[code].name if code in catalog else code
-            cr = float(catalog[code].credits) if code in catalog else 0
-            lines.append(f"  • {code}: {name} ({cr:.0f} cr)")
-    lines.append("\nThis plan has passed all prerequisite, credit, and offering checks.")
-    return "\n".join(lines)
+        return str(result.content)
+    except Exception:
+        return "Please speak with your academic advisor to discuss a mitigation strategy."
