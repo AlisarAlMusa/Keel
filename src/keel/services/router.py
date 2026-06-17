@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.runnables import Runnable
 
 from keel.domain.schemas import ContextEnvelope, RouterResult
 from keel.infra.model_client import ModelClient
@@ -59,20 +59,19 @@ _CHITCHAT_SYSTEM = (
 _CHITCHAT_FALLBACK = "I'm here to help with your courses and registration. What can I do for you?"
 
 _STUB_LABELS = {
-    "whatif",
-    "predict",
-    "register",
-    "waitlist",
-    "plans_manage",
     "my_info",
     "grad_apply",
     "major_change",
-    "petition",
     "escalate",
 }
 
 # Labels that go directly to the agent (not stubs, not direct-LLM).
-_AGENT_LABELS = {"plan", "advise", "audit"}
+# Phase 3: whatif, predict, plans_manage, register, waitlist, petition all have agent tools.
+_AGENT_LABELS = {
+    "plan", "advise", "audit",
+    "whatif", "predict", "plans_manage",
+    "register", "waitlist", "petition",
+}
 
 # Labels that use the lite LLM directly.
 _LITE_LABELS = {"chitchat", "out_of_scope"}
@@ -129,7 +128,7 @@ class RouterResponse:
 
 async def _handle_lite(
     message: str,
-    llm_lite: ChatGoogleGenerativeAI,
+    llm_lite: Any,
 ) -> str:
     """Call the lite LLM with a 50-token cap.  Returns canned response on failure."""
     try:
@@ -137,7 +136,15 @@ async def _handle_lite(
         result = await llm.ainvoke(
             [SystemMessage(content=_CHITCHAT_SYSTEM), HumanMessage(content=message)]
         )
-        return str(result.content).strip() or _CHITCHAT_FALLBACK
+        content = result.content
+        if isinstance(content, list):
+            text = " ".join(
+                b.get("text", "") for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            ).strip()
+        else:
+            text = str(content).strip()
+        return text or _CHITCHAT_FALLBACK
     except Exception as exc:
         _log.warning("router.lite_llm_failed", error=str(exc))
         return _CHITCHAT_FALLBACK
@@ -155,7 +162,7 @@ async def route(
     *,
     envelope: ContextEnvelope,
     model_client: ModelClient,
-    llm_lite: ChatGoogleGenerativeAI,
+    llm_lite: Runnable[Any, Any],
     agent_run: AgentCallable | None = None,
     fallback_threshold: float | None = None,
 ) -> RouterResponse:
