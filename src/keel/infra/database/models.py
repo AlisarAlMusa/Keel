@@ -220,6 +220,11 @@ class Plan(Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     validated_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # Phase 3: one-active-plan (partial unique index in migration) + catalog change detection.
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    catalog_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -251,6 +256,12 @@ class Waitlist(Base):
         PG_UUID(as_uuid=True), ForeignKey("sections.id", ondelete="CASCADE"), nullable=False
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Phase 3 MVP: delegated-consent auto-enroll flag + lifecycle status.
+    auto_enroll: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    # waiting | fulfilled | failed | left
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'waiting'"))
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -277,10 +288,16 @@ class Outbox(Base):
     id: Mapped[UUID] = _pk()
     tenant_id: Mapped[UUID] = _tenant_fk()
     kind: Mapped[str] = mapped_column(Text, nullable=False)
+    # Phase 3: canonical event_type name; processed/attempts for publisher dedup.
+    event_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    processed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -365,6 +382,45 @@ class RagChunk(Base):
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase 3 additions — Action (the resumable-agent write pattern)
+# ---------------------------------------------------------------------------
+
+
+class Action(Base):
+    """One staged write action awaiting human approval (spec §2 / plan.md §1.1).
+
+    Lifecycle: pending → approved → executed | rejected | failed | expired.
+    The payload is FROZEN at stage time and written verbatim on approve-resume.
+    thread_id is written at stage time and read at approve time — never supplied
+    in the approve request (closes the cross-thread resume attack vector).
+    """
+
+    __tablename__ = "actions"
+
+    id: Mapped[UUID] = _pk()
+    tenant_id: Mapped[UUID] = _tenant_fk()
+    student_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # enrollment | waitlist_join | waitlist_leave
+    type: Mapped[str] = mapped_column(Text, nullable=False)
+    # FROZEN approved payload — execute node reads this, never LLM-supplied args.
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    # pending | approved | executed | rejected | failed | expired
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'"))
+    created_at: Mapped[datetime] = _created_at()
+    decided_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    audit_ref: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("audit_log.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
 # Tables that carry tenant-owned data and therefore receive RLS in the migration.
 TENANT_OWNED_TABLES: tuple[str, ...] = (
     "users",
@@ -386,4 +442,6 @@ TENANT_OWNED_TABLES: tuple[str, ...] = (
     "programs",
     "student_preferences",
     "rag_chunks",
+    # Phase 3 additions
+    "actions",
 )
