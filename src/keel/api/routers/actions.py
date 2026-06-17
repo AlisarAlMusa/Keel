@@ -21,11 +21,10 @@ from __future__ import annotations
 from typing import Annotated, Any
 from uuid import UUID
 
-import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
-from keel.infra.database.session import set_tenant, tenant_session
+from keel.infra.database.session import tenant_session
 from keel.logging import get_logger
 from keel.services.actions import ActionRepo
 
@@ -242,8 +241,8 @@ async def reject_action(
 def _parse_uuid(value: str) -> UUID:
     try:
         return UUID(value)
-    except ValueError:
+    except ValueError as err:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid UUID: {value}",
-        )
+        ) from err

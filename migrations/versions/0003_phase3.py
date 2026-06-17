@@ -67,7 +67,10 @@ def upgrade() -> None:
         # (Phase 5 adds: petition | major_change | graduation_app)
         sa.Column("type", sa.Text, nullable=False),
         # FROZEN approved payload. Execute node reads this; ignores LLM args after resume.
-        sa.Column("payload", postgresql.JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "payload", postgresql.JSONB, nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
         # pending → approved → executed | rejected | failed | expired
         sa.Column("status", sa.Text, nullable=False, server_default=sa.text("'pending'")),
         sa.Column("created_at", _TS, nullable=False, server_default=_NOW),

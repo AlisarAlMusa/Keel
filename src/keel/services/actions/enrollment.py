@@ -14,16 +14,14 @@ The section_ids come from the FROZEN payload on the action row — never from LL
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass
-from typing import Any
 from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from keel.services.actions import ActionRepo, audit_write, outbox_write
 from keel.logging import get_logger
+from keel.services.actions import ActionRepo, audit_write, outbox_write
 
 _log = get_logger(__name__)
 
