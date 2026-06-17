@@ -192,6 +192,73 @@ All gates block merge on regression. Thresholds: 100% pass rate (security gates 
 
 ---
 
+## 11. Institutional write-action safety (Phase 4 additions)
+
+Four new write actions were added in Phase 4: F1 graduation application, F2
+major-change request, F3 prerequisite-override petition, and F4 advisor escalation.
+All four use the shared action pattern and carry the following safety properties.
+
+### Injection-safety-by-construction
+
+The agent's F-tool input schemas have **no `approved` parameter**. The LLM cannot
+approve its own writes: even if a student's message says "file it now without
+asking", the tool input schema rejects the field and the service function defaults
+to `approved=False`. The only path to `approved=True` is the explicit student
+approval action (UI / endpoint — Day 6 scope).
+
+Verified by `tests/unit/test_institutional_write_safety.py`:
+- `test_agent_f_tools_have_no_approved_param` — schema inspection: no F-tool exposes
+  the `approved` field.
+- `test_service_fn_defaults_to_not_approved` — parametrized: each service function's
+  `approved` default is `False`.
+- `test_*_no_write_without_approval` — four mocked checks: `approved=False` → the
+  underlying session factory is never called.
+
+### F3 never enrolls
+
+`submit_petition` writes a `PETITION` row in `request_queue` (type = `'petition'`)
+and **never** touches the `enrollments` table. The engine's eligibility block is
+not removed. Verified by `tests/integration/test_institutional_write_safety.py`:
+`test_petition_never_enrolls` asserts `enrollments` count = 0 after a petition is
+filed.
+
+### Cross-tenant isolation for institutional writes
+
+Institutional writes run inside a `tenant_session` (RLS-scoped). A filing for
+tenant A produces zero rows visible to tenant B. Verified by
+`test_cross_tenant_never_writes`.
+
+### Idempotency (no notification storms)
+
+The partial unique index `uq_request_queue_pending` on
+`(tenant_id, student_id, type, target) WHERE status='pending'` + `ON CONFLICT DO
+NOTHING` means a duplicate filing before resolution is a safe no-op — one PENDING
+row and one outbox event regardless of how many times the agent is invoked. Verified
+by `test_idempotent_pending`.
+
+### F4 email handoff only
+
+Escalation writes no `request_queue` row — only an `outbox` event (`escalation_email`)
+and one `audit_log` row. The advisor lookup is done against the RLS-scoped `advisors`
+table; cross-tenant advisor data is never accessible.
+
+### Updated CI gate table
+
+| Test | What it proves |
+|------|----------------|
+| `test_agent_f_tools_have_no_approved_param` | F-tool schemas: no `approved` field → injection structurally impossible |
+| `test_service_fn_defaults_to_not_approved` | Service layer: default gate is `False` |
+| `test_*_no_write_without_approval` | `approved=False` → zero DB calls |
+| `test_no_write_without_approval` (integration) | `approved=False` → 0 rows in `request_queue` + `outbox` |
+| `test_cross_tenant_never_writes` (integration) | Tenant A filing invisible to tenant B |
+| `test_petition_never_enrolls` (integration) | F3 writes `petition` row, never `enrollment` row |
+| `test_idempotent_pending` (integration) | Double-file → exactly 1 PENDING row + 1 outbox event |
+
+All institutional safety tests are always-on (unit) or skipped when
+`TEST_DATABASE_URL` is absent (integration). All block merge on failure.
+
+---
+
 ## Summary of the layered defense
 
 ```

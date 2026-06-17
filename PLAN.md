@@ -38,7 +38,7 @@ The ordered build plan with acceptance criteria. Check items off as they land. `
 - [ ] `domain/engine/workload.py` — difficulty aggregation → light/medium/heavy
 - [ ] `domain/engine/planner.py` — greedy fallback planner
 - [ ] ⚙ **Planner correctness gate** (golden set, 20+ cases) — the headline gate
-- [ ] `PLANNER.md` — engine contract (inputs, Violation schema, fallback)
+- [x] `PLANNER.md` — engine contract (inputs, Violation schema, fallback)
 
 **Parallel (offline, Colab):**
 - [ ] 🟠 Train intent classifier (classical + DL→ONNX + LLM baseline), log to MLflow
@@ -82,15 +82,15 @@ The ordered build plan with acceptance criteria. Check items off as they land. `
 
 ## Phase 4 — Advising, Guidance, Institutional Requests (Day 5)
 
-- [ ] Course Advisor RAG (C1), Degree Audit Chat (C2)
-- [ ] Graduation Planning (A2): skeleton → LLM optimize → validate whole path
-- [ ] Failure-Recovery Chat (C3): impact → recovery plan (itself verified)
-- [ ] Major-Switch Advisor (C4): consequences → recommendation
-- [ ] Elective Recommender (E1, eligible-grounded); Career Path (E2, advisory, catalog-grounded)
-- [ ] `apply_graduation` (F1), `request_major_change` (F2)
-- [ ] 🔴 `submit_petition` (F3): block detected → LLM drafts petition → request queue (human override, not bypass)
-- [ ] Advisor escalation (F4): LLM handoff summary → email via outbox (no role/login)
-- [ ] ⚙ Write-action safety extended to institutional writes
+- [x] Course Advisor RAG (C1), Degree Audit Chat (C2)
+- [x] Graduation Planning (A2): skeleton → LLM optimize → validate whole path
+- [x] Failure-Recovery Chat (C3): impact → recovery plan (itself verified)
+- [x] Major-Switch Advisor (C4): consequences → recommendation
+- [x] Elective Recommender (E1, eligible-grounded); Career Path (E2, advisory, catalog-grounded)
+- [x] `apply_graduation` (F1), `request_major_change` (F2)
+- [x] 🔴 `submit_petition` (F3): block detected → LLM drafts petition → request queue (human override, not bypass)
+- [x] Advisor escalation (F4): LLM handoff summary → email via outbox (no role/login)
+- [x] ⚙ Write-action safety extended to institutional writes
 
 ---
 

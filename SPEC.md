@@ -478,3 +478,25 @@ Thresholds in `eval_thresholds.yaml`; report JSON → MinIO each run; diffed vs 
 1. Before building a component, read its section here; if a contract is missing or vague, **extend this file first**, then implement.
 2. For engine components (§3) and the action pattern (§8), **the human writes the edge-case tests against the Acceptance bullets before the implementation is accepted.**
 3. When a decision diverges from a spec, update the spec and log it in `DECISIONS.md`.
+
+---
+
+## Phase 4 — Advising, Guidance & Institutional Requests
+
+Full contracts for Phase 4 components (C1–C4, E1–E2, F1–F4) are specified in
+`specs/007-phase-4-advise-request/spec.md`. The Pydantic In/Out schemas live in
+`src/keel/domain/schemas_day5.py`. Key invariants:
+
+- **C1–C4, E1, E2-chat**: read-only; no writes; LLM narrates engine numbers.
+- **E2-save** (`save_career_roadmap`): routes through `propose→verify→repair` loop;
+  only a verifier-valid plan is persisted (see `PLANNER.md`).
+- **F1–F4**: shared action pattern in `services/actions/institutional.py`;
+  `approved=False` always (proposal only from the agent); actual writes gate on
+  explicit student approval (Day 6).
+- **F3** (`submit_petition`): writes a `PETITION` row in `request_queue`, never an
+  enrollment row.
+- **F4** (`escalate`): email handoff via outbox only; advisor resolved from
+  the `advisors` table (RLS-scoped, program-specific → catch-all fallback).
+
+Security properties: see `SECURITY.md §11`.
+Design decisions: see `DECISIONS.md` §"Phase 4".

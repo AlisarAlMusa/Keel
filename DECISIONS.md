@@ -460,3 +460,98 @@ no extra service. Parent-child — unjustified at this corpus size.
 **Why.** Colab training notebooks legitimately carry exploratory patterns (display
 imports, cell-scoped names) that production lint rules flag as noise. They are not
 deployed code; the artifacts they produce are gated instead.
+
+---
+
+## Phase 4 — Advise, Guidance & Institutional Requests (Day 5)
+
+### D-P4-001 — Advising (C1–C4) and A2 are read-only
+
+**Decision.** All advising and degree-audit chat tools (C1 course_advisor, C2
+degree_audit_chat, C3 failure_recovery, C4 major_switch_advice) return text and
+never write. The LLM narrates; the engine supplies the numbers.
+
+**Why.** Correctness comes from the engine, not the LLM. Keeping the write surface
+minimal means student intent errors can't result in accidental writes — saving or
+filing is always an explicit second step.
+
+### D-P4-002 — E2 career-path advice may be saved only through the verifier loop
+
+**Decision.** `save_career_roadmap` (E2-save) routes the suggested courses through
+the `propose→verify→repair` loop before persisting a Plan. No raw LLM course list
+ever reaches the database.
+
+**Why.** E2 has no ground truth. DAG+RAG grounding is the only honesty guarantee.
+Saving routes through propose-verify-repair so A4's "valid at save time" invariant
+holds, even for career-path saves. E2 chat stays soft/advisory; legality is only
+enforced when it becomes a persisted plan.
+
+### D-P4-003 — All institutional requests (F1–F4) reuse one action pattern
+
+**Decision.** F1 graduation, F2 major-change, F3 petition, and F4 escalation all
+share a single action-pattern shape: validate → require approval → single DB
+transaction (write + outbox event) → audit row. Implemented once in
+`services/actions/institutional.py`.
+
+**Why.** One subsystem, four intents — not four pipelines. Tested once, reused
+everywhere. Reduces attack surface and keeps correctness guarantees uniform.
+
+### D-P4-004 — One approval gate (student); registrar decision is downstream
+
+**Decision.** The agent's institutional tools call service functions with
+`approved=False`. The True path is reached only by explicit student action (approval
+UI / endpoint, Day 6). Registrar review is a manual downstream step.
+
+**Why.** The agent automates the *request*, not the *decision*. This matches how
+real registration offices work: filing is the agent's value; approval authority
+stays with the human registrar.
+
+### D-P4-005 — New advisors lookup table; no advisor role
+
+**Decision.** F4 escalation resolves an advisor's (name, email) from a new
+`advisors` table (tenant-owned, RLS-protected). Advisors have no login or auth
+principal.
+
+**Why.** F4 needs a routing target, not a login. Adding a fourth role would
+complicate the auth model without adding demo value. The three-role model
+(student / registrar / platform-operator) is preserved.
+
+### D-P4-006 — Idempotency on F1/F2/F3 via partial unique index on PENDING rows
+
+**Decision.** A partial unique index `uq_request_queue_pending` on
+`(tenant_id, student_id, type, target) WHERE status='pending'` prevents duplicate
+PENDING rows for the same filing. ON CONFLICT DO NOTHING means re-filing before
+resolution is a safe no-op.
+
+**Why.** Reuses the enrollment idempotency pattern exactly. Re-filing is only
+possible once the prior PENDING request is resolved — correct institutional behavior.
+
+### D-P4-007 — F3 keeps the engine block hard; petition never auto-enrolls
+
+**Decision.** `submit_petition` writes a PETITION row in `request_queue` and never
+an enrollment row, even after approval. The engine's eligibility block is preserved.
+
+**Why.** A petition is an override *request* routed to a human reviewer, never an
+automatic enrollment. This is the core safety story for F3: a student cannot bypass
+prerequisites via a chat petition. The agent tool further enforces this by holding no
+`approved` parameter — the LLM cannot trigger enrollment by injection.
+
+### D-P4-008 — F4 is email handoff only; no appointment row
+
+**Decision.** Escalation writes one `outbox` event (`escalation_email` kind) and
+one `audit_log` row. No appointment-queue or calendar row was added.
+
+**Why.** Appointment booking adds scope without adding demo value (no calendar
+integration exists). Keeping F4 as pure email handoff keeps the outbox publisher
+generic and scope honest.
+
+### D-P4-009 — SQLAlchemy bind-param bug: :name::jsonb drops last char of bind name
+
+**Decision.** All `CAST(:name AS jsonb)` throughout the write subsystem instead of
+`:name::jsonb`.
+
+**Why.** SQLAlchemy `text()` parses `:name::jsonb` as bind name `nam` (drops the
+last char before `::`). This was a latent bug across `outbox_write`, `audit_write`,
+`insert_pending`, `save_plan`, and `swap_course`. Discovered and fixed in Phase 4;
+verified by repro: `sa.text("VALUES (:payload::jsonb)")._bindparams` → `{'payloa'}`
+vs `CAST(:payload AS jsonb)` → `{'payload'}`.
