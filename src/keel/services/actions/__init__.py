@@ -67,7 +67,7 @@ class ActionRepo:
             sa.text(
                 "INSERT INTO actions "
                 "(tenant_id, student_id, thread_id, type, payload, status) "
-                "VALUES (:tid, :sid, :thread, :atype, :payload::jsonb, 'pending') "
+                "VALUES (:tid, :sid, :thread, :atype, CAST(:payload AS jsonb), 'pending') "
                 "RETURNING id"
             ),
             {
@@ -166,7 +166,7 @@ async def audit_write(
     row = await session.execute(
         sa.text(
             "INSERT INTO audit_log (tenant_id, actor, action, before, after) "
-            "VALUES (:tid, :actor, :action, :before::jsonb, :after::jsonb) "
+            "VALUES (:tid, :actor, :action, CAST(:before AS jsonb), CAST(:after AS jsonb)) "
             "RETURNING id"
         ),
         {
@@ -196,7 +196,7 @@ async def outbox_write(
     row = await session.execute(
         sa.text(
             "INSERT INTO outbox (tenant_id, kind, event_type, payload, processed) "
-            "VALUES (:tid, :kind, :etype, :payload::jsonb, false) "
+            "VALUES (:tid, :kind, :etype, CAST(:payload AS jsonb), false) "
             "RETURNING id"
         ),
         {

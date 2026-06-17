@@ -478,7 +478,7 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                         "INSERT INTO plans "
                         "(tenant_id, student_id, name, version, status, plan_data, "
                         "is_active, catalog_version, validated_at) "
-                        "VALUES (:tid, :sid, :name, 1, 'draft', :data::jsonb, "
+                        "VALUES (:tid, :sid, :name, 1, 'draft', CAST(:data AS jsonb), "
                         "false, 'v1', :now) "
                         "RETURNING id"
                     ),
@@ -495,7 +495,7 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                 await session.execute(
                     sa.text(
                         "INSERT INTO audit_log (tenant_id, actor, action, before, after) "
-                        "VALUES (:tid, :actor, 'plan.saved', NULL, :after::jsonb)"
+                        "VALUES (:tid, :actor, 'plan.saved', NULL, CAST(:after AS jsonb))"
                     ),
                     {
                         "tid": str(tenant_id),
@@ -605,7 +605,7 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                 await session.execute(
                     sa.text(
                         "INSERT INTO audit_log (tenant_id, actor, action, before, after) "
-                        "VALUES (:tid, :actor, 'plan.activated', NULL, :after::jsonb)"
+                        "VALUES (:tid, :actor, 'plan.activated', NULL, CAST(:after AS jsonb))"
                     ),
                     {
                         "tid": str(tenant_id),
@@ -725,7 +725,7 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
             async with tenant_session(deps.session_factory, UUID(tenant_id)) as session:
                 await session.execute(
                     sa.text(
-                        "UPDATE plans SET plan_data = :data::jsonb, validated_at = :now "
+                        "UPDATE plans SET plan_data = CAST(:data AS jsonb), validated_at = :now "
                         "WHERE id = :pid AND tenant_id = :tid"
                     ),
                     {
@@ -738,7 +738,8 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                 await session.execute(
                     sa.text(
                         "INSERT INTO audit_log (tenant_id, actor, action, before, after) "
-                        "VALUES (:tid, :actor, 'plan.swap_course', :before::jsonb, :after::jsonb)"
+                        "VALUES (:tid, :actor, 'plan.swap_course', "
+                        "CAST(:before AS jsonb), CAST(:after AS jsonb))"
                     ),
                     {
                         "tid": str(tenant_id),
