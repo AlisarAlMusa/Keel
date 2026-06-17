@@ -40,7 +40,7 @@ from keel.logging import get_logger
 _log = get_logger(__name__)
 
 _MAX_ITERATIONS = 6
-_SYSTEM_PROMPT_VERSION = "v2"
+_SYSTEM_PROMPT_VERSION = "v3"
 
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 

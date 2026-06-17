@@ -60,13 +60,10 @@ _CHITCHAT_FALLBACK = "I'm here to help with your courses and registration. What 
 
 _STUB_LABELS = {
     "my_info",
-    "grad_apply",
-    "major_change",
-    "escalate",
 }
 
 # Labels that go directly to the agent (not stubs, not direct-LLM).
-# Phase 3: whatif, predict, plans_manage, register, waitlist, petition all have agent tools.
+# Phase 4: grad_apply, major_change, escalate, petition now have agent tools (F1-F4).
 _AGENT_LABELS = {
     "plan",
     "advise",
@@ -77,6 +74,9 @@ _AGENT_LABELS = {
     "register",
     "waitlist",
     "petition",
+    "grad_apply",
+    "major_change",
+    "escalate",
 }
 
 # Labels that use the lite LLM directly.
