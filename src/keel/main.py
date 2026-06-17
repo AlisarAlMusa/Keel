@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from keel import __version__
 from keel.agent.graph import build_agent, run_agent
 from keel.agent.tools import AgentDeps
+from keel.api.routers import actions as actions_router
 from keel.api.routers import admin as admin_router
 from keel.api.routers import chat as chat_router
 from keel.api.routers import health
@@ -124,8 +125,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             settings=settings,
             current_term=Term.FALL,
             current_year=2025,
+            model_client=app.state.model_client,
         )
         compiled_agent = build_agent(app.state.llm_agent, deps, checkpointer)
+        # Store for the actions router (approve/reject resume).
+        app.state.compiled_agent = compiled_agent
 
         async def _agent_run(envelope):  # type: ignore[no-untyped-def]
             return await run_agent(
@@ -162,6 +166,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(chat_router.router)
     app.include_router(admin_router.router)
+    app.include_router(actions_router.router)
     tracing.instrument_fastapi(app)
     return app
 
