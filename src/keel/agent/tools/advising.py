@@ -77,6 +77,41 @@ class GpaEstimateInput(BaseModel):
     )
 
 
+class CourseAdvisorInput(BaseModel):
+    """Input for course_advisor tool (C1)."""
+
+    query: str = Field(
+        description="The course question, e.g. 'What does CS301 cover and require?'."
+    )
+    tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
+    student_id: str = Field(description="The student's UUID — copy from the system prompt.")
+
+
+class DegreeAuditChatInput(BaseModel):
+    """Input for degree_audit_chat tool (C2)."""
+
+    student_id: str = Field(description="The student's UUID — copy from the system prompt.")
+    tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
+
+
+class FailureRecoveryInput(BaseModel):
+    """Input for failure_recovery tool (C3)."""
+
+    student_id: str = Field(description="The student's UUID — copy from the system prompt.")
+    tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
+    failed_course: str = Field(description="Code of the course the student failed, e.g. 'CS102'.")
+
+
+class MajorSwitchAdviceInput(BaseModel):
+    """Input for major_switch_advice tool (C4)."""
+
+    student_id: str = Field(description="The student's UUID — copy from the system prompt.")
+    tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
+    target_program: str = Field(
+        description="Code of the program the student is considering, e.g. 'BSDS'."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Shared DB query helpers (also imported by planning.py)
 # ---------------------------------------------------------------------------
@@ -281,6 +316,103 @@ def _build_engine_objects(
     return transcript, catalog, graph, coreqs, program
 
 
+async def _load_program_engine(
+    session: AsyncSession,
+    tenant_id: str,
+    program_code: str,
+    catalog: dict[str, Course],
+) -> Any:
+    """Load a program (by code) as an engine Program object, or None if absent.
+
+    Used by C4 / F2 to audit a student against a *target* program they are not
+    currently enrolled in.
+    """
+    from keel.domain.engine.contracts import CoreRequirement, Program
+
+    p = await session.execute(
+        sa.text(
+            "SELECT id, code, name, total_credits_required, tenant_id "
+            "FROM programs WHERE code = :code AND tenant_id = :tid"
+        ),
+        {"code": program_code, "tid": tenant_id},
+    )
+    pr = p.mappings().first()
+    if not pr:
+        return None
+    rq = await session.execute(
+        sa.text(
+            "SELECT group_name, required_credits, eligible_course_codes "
+            "FROM program_requirements WHERE program_id = :pid AND tenant_id = :tid"
+        ),
+        {"pid": pr["id"], "tid": tenant_id},
+    )
+    reqs = []
+    for rr in rq.mappings().all():
+        codes = rr["eligible_course_codes"]
+        if isinstance(codes, str):
+            codes = json.loads(codes)
+        reqs.append(
+            CoreRequirement(type="CORE", requirement_id=rr["group_name"], courses=list(codes))
+        )
+    if not reqs:
+        reqs = [CoreRequirement(type="CORE", requirement_id="all", courses=list(catalog.keys()))]
+    return Program(
+        program_id=str(pr["id"]),
+        tenant_id=UUID(str(pr["tenant_id"])),
+        total_credits=int(pr.get("total_credits_required", 120)),
+        requirements=reqs,
+    )
+
+
+def _term_after(term: Term, year: int, n_terms: int) -> str:
+    """Advance (term, year) by n_terms over a fall↔spring cadence; return a label."""
+    order = [Term.FALL, Term.SPRING]
+    try:
+        idx = order.index(term)
+    except ValueError:
+        idx = 0
+    total = idx + n_terms
+    new_term = order[total % 2]
+    new_year = year + (total // 2)
+    return f"{new_term.value.title()} {new_year}"
+
+
+def _compute_switch_impact(
+    *,
+    transcript: list[TranscriptEntry],
+    catalog: dict[str, Course],
+    target_program: Any,
+    target_audit: Any,
+    current_term: Term,
+    current_year: int,
+) -> dict[str, Any]:
+    """Deterministic consequences of switching to ``target_program`` (spec C4/F2).
+
+    lost_credits = passed credits that don't count toward the target program.
+    extra_terms  = remaining target credits at ~15/term.
+    delayed_courses = target requirements not yet eligible.
+    """
+    target_codes: set[str] = set()
+    for req in target_program.requirements:
+        target_codes.update(getattr(req, "courses", []) or [])
+
+    lost_credits = 0
+    for t in transcript:
+        if t.passed and t.course_code not in target_codes and t.course_code in catalog:
+            lost_credits += int(catalog[t.course_code].credits)
+
+    remaining = int(getattr(target_audit, "remaining_credits", 0) or 0)
+    extra_terms = max(0, -(-remaining // 15))  # ceil
+    delayed = [c for c in target_codes if c not in set(target_audit.eligible_now)][:8]
+
+    return {
+        "lost_credits": lost_credits,
+        "extra_terms": extra_terms,
+        "new_graduation_term": _term_after(current_term, current_year, extra_terms),
+        "delayed_courses": delayed,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tool factory
 # ---------------------------------------------------------------------------
@@ -330,6 +462,7 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
             remaining = [r.requirement_id for r in result.remaining_requirements]
 
             summary = (
+                f"Current term: {deps.current_term.value}, year: {deps.current_year}.\n"
                 f"Credits completed: {result.credits_completed:.1f} / "
                 f"{result.total_credits_required:.1f} "
                 f"({result.pct_complete * 100:.0f}%).\n"
@@ -540,6 +673,352 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
             return err.model_dump_json()
 
     return [audit_degree, rag_search, predict_risk, gpa_estimate]
+
+
+# ---------------------------------------------------------------------------
+# Advising chat tools (C1–C4) — read-only, engine numbers + grounded narration
+# ---------------------------------------------------------------------------
+
+import re  # noqa: E402
+
+_COURSE_CODE_RE = re.compile(r"[A-Z]{2,4}\d{3}[A-Z]?")
+
+
+def make_advising_chat_tools(deps: AgentDeps) -> list[Any]:
+    """Return [course_advisor, degree_audit_chat, failure_recovery, major_switch_advice].
+
+    All four are READ-ONLY (spec §1): the engine owns every number; the LLM only
+    narrates; nothing is written.
+    """
+
+    @tool(args_schema=CourseAdvisorInput)
+    async def course_advisor(query: str, tenant_id: str, student_id: str) -> str:
+        """Answer a question about a course — what it covers, unlocks, or requires —
+        grounded in the catalog (RAG). Prerequisite facts are injected from the engine
+        DAG, never from prose. Use for 'what does CS301 cover/require?' style questions.
+        """
+        try:
+            async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
+                results = await retrieve(
+                    query=query,
+                    tenant_id=tenant_id,
+                    session=_db,
+                    cohere_client=deps.cohere_client,
+                    settings=deps.settings,
+                )
+                data = await _load_student_data(_db, student_id, tenant_id)
+
+            # Prereqs from the DAG (authoritative), keyed off any course codes in the query.
+            dag_prereqs: list[str] = []
+            codes_in_query = set(_COURSE_CODE_RE.findall(query.upper()))
+            for r in data.get("prereq_rows", []):
+                if r["course_code"] in codes_in_query:
+                    dag_prereqs.append(f"{r['course_code']} requires {r['requires_code']}")
+
+            context = "\n\n".join(
+                f"[{i}] {(r.code or r.doc or r.source)}: {r.content}"
+                for i, r in enumerate(results, 1)
+            ) or "No catalog context found."
+            sources = [r.code or r.doc or r.source for r in results]
+
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            prereq_note = (
+                "\n\nAUTHORITATIVE PREREQUISITES (from the engine DAG — use these, "
+                "not any prereqs in the context): " + "; ".join(dag_prereqs)
+                if dag_prereqs
+                else ""
+            )
+            prompt = (
+                f"Answer the student's question using ONLY the catalog context below.\n"
+                f"QUESTION: {query}\n\nCONTEXT:\n{context}{prereq_note}\n\n"
+                "Be specific and complete. If prerequisites are stated above, use them verbatim."
+            )
+            res = await deps.llm_agent.ainvoke(
+                [
+                    SystemMessage(
+                        content="You are a course advisor. Ground every claim in context."
+                    ),
+                    HumanMessage(content=prompt),
+                ]
+            )
+            answer = _extract_advise_text(res.content)
+            out = answer
+            if dag_prereqs:
+                out += "\n\n**Prerequisites (from records):** " + "; ".join(dag_prereqs)
+            if sources:
+                out += "\n\n_Sources: " + ", ".join(dict.fromkeys(sources)) + "_"
+            return out
+        except Exception as exc:
+            _log.error("tool.course_advisor.error", error=str(exc))
+            return ToolError(error=str(exc), retryable=True, category="external").model_dump_json()
+
+    @tool(args_schema=DegreeAuditChatInput)
+    async def degree_audit_chat(student_id: str, tenant_id: str) -> str:
+        """Explain in plain language what the student still needs to graduate.
+        The engine computes every number (missing requirements, remaining credits,
+        eligible courses); the LLM only restates them verbatim — never recomputed.
+        """
+        try:
+            async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
+                data = await _load_student_data(_db, student_id, tenant_id)
+            if not data:
+                return ToolError(
+                    error=f"Student {student_id} not found.", retryable=False, category="validation"
+                ).model_dump_json()
+            transcript, catalog, graph, coreqs, program = _build_engine_objects(
+                data, deps.current_term, deps.current_year
+            )
+            if program is None:
+                return ToolError(
+                    error="Student has no program.", retryable=False, category="validation"
+                ).model_dump_json()
+            result = audit(
+                transcript=transcript,
+                program=program,
+                graph=graph,
+                catalog=catalog,
+                current_term=deps.current_term,
+                current_year=deps.current_year,
+            )
+            remaining_reqs = [r.requirement_id for r in result.remaining_requirements]
+            remaining_credits = int(result.remaining_credits)
+            eligible = list(result.eligible_now)
+
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            from keel.services.prompts import c2_audit_summary_prompt
+
+            prompt = c2_audit_summary_prompt.build(
+                remaining_requirements=remaining_reqs,
+                remaining_credits=remaining_credits,
+                eligible_courses=eligible,
+            )
+            res = await deps.llm_agent.ainvoke(
+                [SystemMessage(content=prompt), HumanMessage(content="Summarize.")]
+            )
+            narrative = _extract_advise_text(res.content)
+            return (
+                f"**Degree audit**\n"
+                f"- Remaining requirement groups: {', '.join(remaining_reqs) or 'none'}\n"
+                f"- Remaining credits: {remaining_credits}\n"
+                f"- Eligible now: {', '.join(eligible) or 'none'}\n\n{narrative}"
+            )
+        except Exception as exc:
+            _log.error("tool.degree_audit_chat.error", error=str(exc))
+            return ToolError(error=str(exc), retryable=True, category="engine").model_dump_json()
+
+    @tool(args_schema=FailureRecoveryInput)
+    async def failure_recovery(student_id: str, tenant_id: str, failed_course: str) -> str:
+        """Build a concrete recovery plan after a student fails a course. The engine
+        computes the downstream impact and rebuilds the eligible pool from the updated
+        transcript; the recovery plan is produced by the SAME propose→verify→repair loop
+        as propose_plan (failure baked into the audit) and is verifier-valid. No write.
+        """
+        try:
+            failed_course = failed_course.upper()
+            term, year = deps.current_term, deps.current_year
+            async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
+                data = await _load_student_data(_db, student_id, tenant_id)
+            if not data:
+                return ToolError(
+                    error=f"Student {student_id} not found.", retryable=False, category="validation"
+                ).model_dump_json()
+            transcript, catalog, graph, coreqs, program = _build_engine_objects(data, term, year)
+            if program is None:
+                return ToolError(
+                    error="Student has no program.", retryable=False, category="validation"
+                ).model_dump_json()
+
+            # Bake the failure into the transcript: the course is now NOT passed.
+            failure_transcript = [t for t in transcript if t.course_code != failed_course]
+            from decimal import Decimal as _Dec
+
+            failure_transcript.append(
+                TranscriptEntry(
+                    tenant_id=UUID(tenant_id),
+                    student_id=UUID(student_id),
+                    course_code=failed_course,
+                    grade=_Dec("0.0"),
+                    passed=False,
+                    term=term,
+                    year=year - 1,
+                )
+            )
+            recovery_audit = audit(
+                transcript=failure_transcript,
+                program=program,
+                graph=graph,
+                catalog=catalog,
+                current_term=term,
+                current_year=year,
+            )
+
+            # Downstream impact: courses that require the failed course (delayed).
+            delayed = [
+                r["course_code"]
+                for r in data.get("prereq_rows", [])
+                if r["requires_code"] == failed_course
+            ]
+            remaining_credits = int(recovery_audit.remaining_credits)
+            extra_terms = max(1, -(-remaining_credits // 15))
+            new_grad = _term_after(term, year, extra_terms)
+
+            # Reuse the propose→verify→repair loop (lazy import avoids a cycle).
+            from keel.agent.tools.planning import _validate_with_repair
+            from keel.domain.engine.planner import greedy_plan
+            from keel.domain.engine.verifier import verify
+            from keel.domain.engine.workload import compute_workload
+
+            seed_codes = ([failed_course] if failed_course in catalog else []) + [
+                c for c in recovery_audit.eligible_now if c != failed_course
+            ][:4]
+            plan = await _validate_with_repair(
+                proposed={"courses": seed_codes},
+                catalog=catalog,
+                graph=graph,
+                transcript=failure_transcript,
+                coreqs=coreqs,
+                term=term,
+                year=year,
+                student_id=student_id,
+                tenant_id=tenant_id,
+                program=program,
+                llm=deps.llm_agent,
+            )
+            if plan is None:
+                plan = greedy_plan(
+                    transcript=failure_transcript,
+                    program=program,
+                    graph=graph,
+                    catalog=catalog,
+                    corequisites=coreqs,
+                    start_term=term,
+                    start_year=year,
+                    student_id_hint=student_id,
+                )
+            if plan is None or not plan.terms:
+                delayed_txt = ", ".join(delayed) or "no downstream courses"
+                return (
+                    f"Failing {failed_course} delays {delayed_txt}. "
+                    "I couldn't auto-build a recovery plan — please consult your advisor."
+                )
+
+            # Confirm verifier-valid (the type-level guarantee of a recovery plan).
+            first_term = plan.terms[0]
+            violations = verify(
+                plan=plan,
+                catalog=catalog,
+                graph=graph,
+                transcript=failure_transcript,
+                corequisites=coreqs,
+                current_term=term,
+                current_year=year,
+            )
+            valid = not violations
+            courses = [catalog[c] for c in first_term.course_codes if c in catalog]
+            _, band = compute_workload(courses)
+            course_lines = ", ".join(first_term.course_codes)
+            check = "engine-verified ✓" if valid else "⚠ needs advisor review"
+            next_label = f"{first_term.term.value.title()} {first_term.year}, {band.value} load"
+            return (
+                f"**Recovery plan after failing {failed_course}** ({check})\n"
+                f"- Downstream delayed: {', '.join(delayed) or 'none'}\n"
+                f"- Revised graduation estimate: {new_grad} (~{extra_terms} extra term(s))\n"
+                f"- Next term ({next_label}): {course_lines}\n\n"
+                "Retake the failed course as soon as it's offered. This is a plan, not a "
+                "registration — say the word and I'll help you enroll."
+            )
+        except Exception as exc:
+            _log.error("tool.failure_recovery.error", error=str(exc))
+            return ToolError(error=str(exc), retryable=True, category="engine").model_dump_json()
+
+    @tool(args_schema=MajorSwitchAdviceInput)
+    async def major_switch_advice(student_id: str, tenant_id: str, target_program: str) -> str:
+        """Advise on switching majors. The engine computes the consequences (lost
+        credits, new timeline, delayed courses) against the target program; the LLM
+        frames an explicitly ADVISORY recommendation — never a guarantee. No write.
+        The action to actually switch is request_major_change (F2).
+        """
+        try:
+            target_program = target_program.upper()
+            term, year = deps.current_term, deps.current_year
+            async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
+                data = await _load_student_data(_db, student_id, tenant_id)
+                if not data:
+                    return ToolError(
+                        error=f"Student {student_id} not found.",
+                        retryable=False,
+                        category="validation",
+                    ).model_dump_json()
+                transcript, catalog, graph, coreqs, own_program = _build_engine_objects(
+                    data, term, year
+                )
+                target = await _load_program_engine(_db, tenant_id, target_program, catalog)
+            if target is None:
+                return ToolError(
+                    error=f"Unknown target program '{target_program}'.",
+                    retryable=False,
+                    category="validation",
+                ).model_dump_json()
+
+            target_audit = audit(
+                transcript=transcript,
+                program=target,
+                graph=graph,
+                catalog=catalog,
+                current_term=term,
+                current_year=year,
+            )
+            impact = _compute_switch_impact(
+                transcript=transcript,
+                catalog=catalog,
+                target_program=target,
+                target_audit=target_audit,
+                current_term=term,
+                current_year=year,
+            )
+
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            from keel.services.prompts import c4_major_switch_prompt
+
+            prompt = c4_major_switch_prompt.build(
+                target_program=target_program,
+                lost_credits=impact["lost_credits"],
+                new_graduation_term=impact["new_graduation_term"],
+                delayed_courses=impact["delayed_courses"],
+            )
+            res = await deps.llm_agent.ainvoke(
+                [SystemMessage(content=prompt), HumanMessage(content="Give your recommendation.")]
+            )
+            recommendation = _extract_advise_text(res.content)
+            return (
+                f"**Switching to {target_program} — consequences (engine-computed)**\n"
+                f"- Credits that wouldn't count: {impact['lost_credits']}\n"
+                f"- New graduation estimate: {impact['new_graduation_term']} "
+                f"(~{impact['extra_terms']} extra term(s))\n"
+                f"- Courses still gated by prerequisites: "
+                f"{', '.join(impact['delayed_courses']) or 'none'}\n\n"
+                f"{recommendation}\n\n_Advisory only — not a guarantee._"
+            )
+        except Exception as exc:
+            _log.error("tool.major_switch_advice.error", error=str(exc))
+            return ToolError(error=str(exc), retryable=True, category="engine").model_dump_json()
+
+    return [course_advisor, degree_audit_chat, failure_recovery, major_switch_advice]
+
+
+def _extract_advise_text(content: Any) -> str:
+    """Extract plain text from LLM content that may be a list of blocks (Gemini)."""
+    if isinstance(content, list):
+        parts = [
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+            if not isinstance(block, dict) or block.get("type") == "text"
+        ]
+        return "\n".join(p for p in parts if p)
+    return str(content) if content else ""
 
 
 # ---------------------------------------------------------------------------
