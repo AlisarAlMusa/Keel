@@ -66,8 +66,13 @@ class Settings(BaseSettings):
     vault_secret_path: str = "keel/app"
 
     # --- LLM models (names are not secret; keys come from Vault) ---
+    # Fallback chain: strongest → high-quota → reserve.
+    #   gemini-2.5-flash      → 20 RPD  (best quality)
+    #   gemini-3.1-flash-lite → 500 RPD (hard to exhaust — main safety net)
+    #   gemini-3-flash        → 20 RPD  (last resort)
     gemini_model: str = "gemini-2.5-flash"
-    gemini_lite_model: str = "gemini-2.0-flash-lite"
+    gemini_fallback_models: list[str] = ["gemini-3.1-flash-lite", "gemini-3-flash"]
+    gemini_lite_model: str = "gemini-2.5-flash-lite"
 
     # --- RAG / embedding knobs (all tuneable without code change) ---
     embed_model: str = "embed-multilingual-v3.0"

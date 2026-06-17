@@ -156,12 +156,12 @@ async def test_model_server_failure_fails_safe_to_agent() -> None:
 
 @pytest.mark.asyncio
 async def test_stub_label_returns_stub_text() -> None:
-    """A stub label (register) returns a canned response without LLM or agent."""
-    envelope = _make_envelope("Register me for CS301")
+    """A stub label (my_info) returns a canned response without LLM or agent."""
+    envelope = _make_envelope("Show me my student info")
 
     mock_model_client = AsyncMock()
     mock_model_client.predict_intent = AsyncMock(
-        return_value=IntentPrediction(label="register", confidence=0.85)
+        return_value=IntentPrediction(label="my_info", confidence=0.85)
     )
 
     mock_llm_lite = MagicMock()
@@ -175,7 +175,7 @@ async def test_stub_label_returns_stub_text() -> None:
         fallback_threshold=0.5115,
     )
 
-    assert result.label == "register"
+    assert result.label == "my_info"
     assert result.routed_to_agent is False
     assert "not yet available" in result.text or "advisor" in result.text.lower()
     mock_agent_run.assert_not_called()
