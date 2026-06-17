@@ -508,7 +508,9 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                 {
                     "plan_id": str(plan_db_id),
                     "name": plan_name,
-                    "message": f"Plan '{plan_name}' saved (engine-verified ✓). Plan ID: {plan_db_id}.",
+                    "message": (
+                        f"Plan '{plan_name}' saved (engine-verified ✓). Plan ID: {plan_db_id}."
+                    ),
                 }
             )
 
