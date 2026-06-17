@@ -505,10 +505,8 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
             transcript, catalog, _, _, _ = _build_engine_objects(data, _Term.FALL, 2025)
 
             # Compute current GPA from transcript.
-            graded = [t for t in transcript if t.grade is not None]
-            current_gpa = (
-                float(sum(t.grade for t in graded) / len(graded)) if graded else 0.0  # type: ignore[arg-type]
-            )
+            grades = [t.grade for t in transcript if t.grade is not None]
+            current_gpa = float(sum(grades) / len(grades)) if grades else 0.0
 
             course_details = [
                 f"{c}: {catalog[c].name} (difficulty {catalog[c].difficulty}/5)"

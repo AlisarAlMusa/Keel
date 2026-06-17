@@ -26,7 +26,6 @@ from uuid import UUID
 
 import redis.asyncio as aioredis
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.runnables import Runnable
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -156,7 +155,7 @@ async def _save_snapshot(
 
 
 def build_agent(
-    llm: Runnable[Any, Any],
+    llm: Any,
     deps: AgentDeps,
     checkpointer: AsyncPostgresSaver,
 ) -> Any:
