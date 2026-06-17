@@ -110,6 +110,5 @@ def downgrade() -> None:
 
     # Restore the original Phase-0 channel check.
     op.execute(
-        "ALTER TABLE outbox ADD CONSTRAINT ck_outbox_kind "
-        "CHECK (kind IN ('email','notification'))"
+        "ALTER TABLE outbox ADD CONSTRAINT ck_outbox_kind CHECK (kind IN ('email','notification'))"
     )

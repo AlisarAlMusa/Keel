@@ -67,9 +67,7 @@ def test_agent_f_tools_have_no_approved_param() -> None:
 def test_service_fn_defaults_to_not_approved(fn) -> None:  # type: ignore[no-untyped-def]
     sig = inspect.signature(fn)
     assert "approved" in sig.parameters, f"{fn.__name__} has no approval gate"
-    assert sig.parameters["approved"].default is False, (
-        f"{fn.__name__} must default approved=False"
-    )
+    assert sig.parameters["approved"].default is False, f"{fn.__name__} must default approved=False"
 
 
 # ---------------------------------------------------------------------------

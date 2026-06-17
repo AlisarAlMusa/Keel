@@ -144,8 +144,11 @@ def make_guidance_tools(deps: AgentDeps) -> list[Any]:
             if invalid:
                 dropped_note = f"\n\n(Ignored non-eligible suggestions: {', '.join(invalid)}.)"
             header = f"**Eligible electives:** {', '.join(eligible_set)}\n\n"
-            return header + ranked_text + dropped_note + (
-                "" if kept else "\n\nAll recommendations are within your eligible set."
+            return (
+                header
+                + ranked_text
+                + dropped_note
+                + ("" if kept else "\n\nAll recommendations are within your eligible set.")
             )
         except Exception as exc:
             _log.error("tool.elective_recommender.error", error=str(exc))
@@ -169,9 +172,7 @@ def make_guidance_tools(deps: AgentDeps) -> list[Any]:
             _, catalog, _, _, _ = _build_engine_objects(data, term, year)
             catalog_codes = list(catalog.keys())
 
-            prompt = e2_career_path_prompt.build(
-                interest=interest, catalog_electives=catalog_codes
-            )
+            prompt = e2_career_path_prompt.build(interest=interest, catalog_electives=catalog_codes)
             res = await deps.llm_agent.ainvoke(
                 [SystemMessage(content=prompt), HumanMessage(content=f"Interest: {interest}")]
             )

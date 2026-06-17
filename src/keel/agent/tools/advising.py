@@ -715,10 +715,13 @@ def make_advising_chat_tools(deps: AgentDeps) -> list[Any]:
                 if r["course_code"] in codes_in_query:
                     dag_prereqs.append(f"{r['course_code']} requires {r['requires_code']}")
 
-            context = "\n\n".join(
-                f"[{i}] {(r.code or r.doc or r.source)}: {r.content}"
-                for i, r in enumerate(results, 1)
-            ) or "No catalog context found."
+            context = (
+                "\n\n".join(
+                    f"[{i}] {(r.code or r.doc or r.source)}: {r.content}"
+                    for i, r in enumerate(results, 1)
+                )
+                or "No catalog context found."
+            )
             sources = [r.code or r.doc or r.source for r in results]
 
             from langchain_core.messages import HumanMessage, SystemMessage

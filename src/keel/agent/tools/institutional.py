@@ -149,9 +149,7 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
             return ToolError(error=str(exc), retryable=True, category="engine").model_dump_json()
 
     @tool(args_schema=RequestMajorChangeInput)
-    async def request_major_change(
-        student_id: str, tenant_id: str, target_program_id: str
-    ) -> str:
+    async def request_major_change(student_id: str, tenant_id: str, target_program_id: str) -> str:
         """Prepare a major-change request to a target program. The engine computes the
         consequences (lost credits, new timeline); the LLM frames the impact summary
         attached to the request. Filing requires the student's explicit approval — this
@@ -313,9 +311,7 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
                         category="validation",
                     ).model_dump_json()
                 transcript, catalog, _g, _c, _p = _build_engine_objects(data, term, year)
-                program_code = (
-                    str(data["program_row"]["code"]) if data.get("program_row") else None
-                )
+                program_code = str(data["program_row"]["code"]) if data.get("program_row") else None
                 resolved = await inst.resolve_advisor_email(
                     _db, tenant_id=UUID(tenant_id), program=program_code
                 )
