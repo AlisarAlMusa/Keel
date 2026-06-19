@@ -1,12 +1,18 @@
 """Chat endpoint — the single student-facing interaction route.
 
-Request flow:
-  1. Mint request_id at entry; propagate through all calls.
-  2. Run input guardrails (injection + cross-tenant refusal).
-  3. Build ContextEnvelope and call the router.
-  4. Redact and return the response.
+Phase 5: wrapped with widget auth (get_widget_context + verify_origin +
+db_with_tenant).  student_id and tenant_id now come ONLY from the verified
+JWT — the request body carries only the message.
 
-No business logic here — routers parse, authorize, delegate to services, serialize.
+Request flow:
+  1. get_widget_context  — verify Bearer JWT → WidgetContext
+  2. verify_origin_or_403 — Origin in allowed list, else 403
+  3. Mint request_id; run input guardrails.
+  4. Build ContextEnvelope from the verified context + body.message.
+  5. Route (classifier → workflow | agent).
+  6. Redact and return.
+
+No business logic here — routers parse, authorize, delegate to services.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
 
+from keel.api.auth import WidgetContext, get_widget_context, verify_origin_or_403
 from keel.domain.schemas import ContextEnvelope, RouterResult, StudentPreference
 from keel.infra.guardrails import check_input, redact
 from keel.infra.model_client import ModelClient
@@ -37,9 +44,7 @@ _log = get_logger(__name__)
 
 class ChatRequest(BaseModel):
     message: str
-    student_id: str
-    session_id: str
-    tenant_id: str
+    session_id: str  # client-generated; used for Redis memory key
 
 
 class ChatResponse(BaseModel):
@@ -49,7 +54,7 @@ class ChatResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Dependency helpers
+# Dependency helpers (singletons from app.state)
 # ---------------------------------------------------------------------------
 
 
@@ -86,47 +91,54 @@ def _get_fallback_threshold(request: Request) -> float:
 async def chat(
     body: ChatRequest,
     request: Request,
+    ctx: Annotated[WidgetContext, Depends(get_widget_context)],
     model_client: Annotated[ModelClient, Depends(_get_model_client)],
     llm_lite: Annotated[ChatGoogleGenerativeAI, Depends(_get_llm_lite)],
 ) -> ChatResponse:
-    """Single student message → guardrails → router → response."""
+    """Single student message → guardrails → router → response.
+
+    student_id and tenant_id come from the verified JWT (ctx), never from body.
+    """
+    # Origin check (defense-in-depth; JWT already verifies identity)
+    verify_origin_or_403(request, ctx.tenant_id)
+
     request_id = str(uuid.uuid4())
     prompt_hash = hashlib.sha256(body.message.encode()).hexdigest()[:16]
 
     _log.info(
         "chat.request",
         request_id=request_id,
-        tenant_id=body.tenant_id,
-        student_id=body.student_id,
+        tenant_id=ctx.tenant_id,
+        student_id=ctx.student_id,
         session_id=body.session_id,
-        prompt_hash=prompt_hash,  # never log full text
+        prompt_hash=prompt_hash,
     )
 
     # --- Guardrails: input rail ---
-    decision = check_input(body.message, tenant_id=body.tenant_id)
+    decision = check_input(body.message, tenant_id=ctx.tenant_id)
     if not decision.safe:
         _log.warning(
             "chat.guardrail_refused",
             request_id=request_id,
             reason=decision.reason,
-            tenant_id=body.tenant_id,
+            tenant_id=ctx.tenant_id,
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Message refused by content guardrails: {decision.reason}",
         )
 
-    # --- Build envelope ---
+    # --- Build envelope (identity from JWT, never from body) ---
     envelope = ContextEnvelope(
-        tenant_id=body.tenant_id,
-        student_id=body.student_id,
+        tenant_id=ctx.tenant_id,
+        student_id=ctx.student_id,
         session_id=body.session_id,
         request_id=request_id,
         message=body.message,
         preferences=StudentPreference(),
     )
 
-    # --- Route (tools open their own DB sessions via session_factory in AgentDeps) ---
+    # --- Route ---
     agent_run = _get_agent_run(request)
     fallback_threshold = _get_fallback_threshold(request)
 
@@ -138,7 +150,7 @@ async def chat(
         fallback_threshold=fallback_threshold,
     )
 
-    # --- Guardrails: output rail (redact) ---
+    # --- Guardrails: output rail ---
     safe_text = redact(router_response.text)
     content_hash = hashlib.sha256(safe_text.encode()).hexdigest()[:16]
 

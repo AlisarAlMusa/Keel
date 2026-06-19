@@ -19,12 +19,26 @@ htmlcov/
 .env.*
 !.env.example
 
-Keel_Brief.pdf
 ALL NOTEBOOKS/
 
 
 # Node (frontend, Phase 5)
+# node_modules/ and dist/ patterns above already apply recursively,
+# but listed explicitly here for clarity.
 node_modules/
+frontend/node_modules/
+frontend/ui/node_modules/
+frontend/widget/node_modules/
+frontend/admin/node_modules/
+frontend/portal/node_modules/
+
+# Frontend build artifacts — rebuilt inside Docker; not committed
+frontend/widget/dist/
+frontend/admin/dist/
+frontend/portal/dist/
+
+# npm lockfiles for individual workspaces are managed at the root
+# frontend/package-lock.json IS committed (workspace root lockfile)
 
 # OS / editor
 .DS_Store

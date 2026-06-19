@@ -116,6 +116,8 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       KEEL_JWT_SIGNING_KEY: ${KEEL_JWT_SIGNING_KEY}
       KEEL_WIDGET_TOKEN_SECRET: ${KEEL_WIDGET_TOKEN_SECRET}
+      # Phase 5: shared secret for portal→keel service-to-service auth (D-P5-005)
+      KEEL_PORTAL_SERVICE_SECRET: ${KEEL_PORTAL_SERVICE_SECRET}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       COHERE_API_KEY: ${COHERE_API_KEY}
     entrypoint: ["/bin/sh", "-c"]
@@ -127,6 +129,7 @@ services:
           minio_secret_key=$MINIO_ROOT_PASSWORD \
           jwt_signing_key=$KEEL_JWT_SIGNING_KEY \
           widget_token_secret=$KEEL_WIDGET_TOKEN_SECRET \
+          portal_service_secret=$KEEL_PORTAL_SERVICE_SECRET \
           gemini_api_key=$GEMINI_API_KEY \
           cohere_api_key=$COHERE_API_KEY
     networks: [keel]
@@ -256,6 +259,41 @@ services:
     depends_on:
       model-artifacts-sync:
         condition: service_completed_successfully
+    networks: [keel]
+
+  # Mock SIS portal — separate microservice (D-P5-001, D-P5-002).
+  # Node/Express backend + React SPA. Reads SIS-domain tables from Postgres
+  # directly. Its only call into Keel is POST /internal/mint-token (s2s auth).
+  portal:
+    build:
+      # Build context is the frontend workspace root so the Dockerfile can access
+      # ui/ (shared components) alongside portal/ (server + SPA).
+      context: ./frontend
+      dockerfile: portal/Dockerfile
+    environment:
+      PORT: "3000"
+      # Postgres DSN for direct SIS-domain reads (keel_app role, RLS enforced)
+      DATABASE_URL: "postgresql://keel_app:${KEEL_APP_PASSWORD}@db:5432/keel"
+      # Keel API base URL (internal Docker network — never exposed to browsers)
+      KEEL_API_URL: "http://api:8000"
+      # Service-to-service secret for /internal/mint-token (D-P5-005)
+      PORTAL_SERVICE_SECRET: ${KEEL_PORTAL_SERVICE_SECRET}
+      # Signs the portal session cookie (matches keel-api jwt_signing_key)
+      SESSION_SECRET: ${KEEL_JWT_SIGNING_KEY}
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        # API must be up before portal can call /internal/mint-token
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks: [keel]
 
 volumes:

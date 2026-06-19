@@ -239,6 +239,8 @@ class Enrollment(Base):
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'enrolled'"))
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # Phase 5: provenance — 'keel' | 'manual' | 'sis'. Drives the "via Keel" badge.
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'sis'"))
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -436,6 +438,62 @@ class Advisor(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+# ---------------------------------------------------------------------------
+# Phase 5 additions — UsageEvent, WidgetConfig
+# ---------------------------------------------------------------------------
+
+
+class UsageEvent(Base):
+    """Cost-tracking row written on every LLM/embedding call (spec §6).
+
+    kind: 'llm' | 'embedding'
+    cost_estimate: USD approximation based on token counts.
+    """
+
+    __tablename__ = "usage_event"
+
+    id: Mapped[UUID] = _pk()
+    tenant_id: Mapped[UUID] = _tenant_fk()
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    cost_estimate: Mapped[Decimal] = mapped_column(
+        Numeric(12, 8), nullable=False, server_default=text("0")
+    )
+    model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class WidgetConfig(Base):
+    """Per-tenant Keel widget configuration (spec §3).
+
+    One row per tenant. Safety rails are NOT here — they are hardcoded.
+    allowed_origins drives the origin check (spec §1 verify_origin_or_403).
+    """
+
+    __tablename__ = "widget_config"
+
+    id: Mapped[UUID] = _pk()
+    tenant_id: Mapped[UUID] = _tenant_fk()
+    persona: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text(
+            "'You are Keel, a helpful AI academic advisor. "
+            "You help students plan their courses thoughtfully and safely.'"
+        ),
+    )
+    persona_name: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'Keel'"))
+    allowed_origins: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    enabled_tools: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
 # Tables that carry tenant-owned data and therefore receive RLS in the migration.
 TENANT_OWNED_TABLES: tuple[str, ...] = (
     "users",
@@ -461,4 +519,7 @@ TENANT_OWNED_TABLES: tuple[str, ...] = (
     "actions",
     # Phase 4 additions
     "advisors",
+    # Phase 5 additions
+    "usage_event",
+    "widget_config",
 )

@@ -41,6 +41,7 @@ from keel.infra.database.models import (
     Student,
     StudentTranscript,
     Tenant,
+    User,
 )
 from keel.logging import configure_logging, get_logger
 from keel.services.ingestion import ingest_file
@@ -633,6 +634,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
     "northane": [
         {
             "label": "N1",
+            "email": "alex.morgan@northane.edu",
+            "display_name": "Alex Morgan",
             "program_code": "BSCS",
             "current_term": "fall",
             "current_year": 2026,
@@ -647,6 +650,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
         },
         {
             "label": "N2",
+            "email": "jordan.lee@northane.edu",
+            "display_name": "Jordan Lee",
             "program_code": "BSCS",
             "current_term": "fall",
             "current_year": 2026,
@@ -666,6 +671,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
         },
         {
             "label": "N3",
+            "email": "riley.chen@northane.edu",
+            "display_name": "Riley Chen",
             "program_code": "BSCS",
             "current_term": "fall",
             "current_year": 2026,
@@ -683,6 +690,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
     "summit": [
         {
             "label": "S1",
+            "email": "taylor.brooks@summit.edu",
+            "display_name": "Taylor Brooks",
             "program_code": "BSCS",
             "current_term": "fall",
             "current_year": 2026,
@@ -697,6 +706,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
         },
         {
             "label": "S2",
+            "email": "morgan.patel@summit.edu",
+            "display_name": "Morgan Patel",
             "program_code": "BSCS",
             "current_term": "spring",
             "current_year": 2026,
@@ -725,6 +736,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
         },
         {
             "label": "S3",
+            "email": "casey.wu@summit.edu",
+            "display_name": "Casey Wu",
             "program_code": "BSCS",
             "current_term": "fall",
             "current_year": 2026,
@@ -848,14 +861,33 @@ async def _seed_tenant(
             )
         )
 
-    # Students + transcripts.
+    # Students + User accounts + transcripts.
+    # Create all User rows first and flush so the FK from Student.user_id is
+    # satisfied — SQLAlchemy doesn't know the ordering without a relationship().
+    student_user_pairs: list[tuple[dict, UUID, UUID]] = []
     for s in _STUDENTS[slug]:
-        sid = uuid4()
+        uid = uuid4()
+        session.add(
+            User(
+                id=uid,
+                tenant_id=tenant_id,
+                email=s["email"],
+                role="student",
+                display_name=s["display_name"],
+            )
+        )
+        student_user_pairs.append((s, uuid4(), uid))
+
+    # Flush Users into DB before Student rows reference them via FK.
+    await session.flush()
+
+    for s, sid, uid in student_user_pairs:
         prog_code = s["program_code"]
         session.add(
             Student(
                 id=sid,
                 tenant_id=tenant_id,
+                user_id=uid,
                 program_code=prog_code,
                 program_id=program_ids.get(prog_code),
                 max_credits_per_term=18,

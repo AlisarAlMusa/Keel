@@ -1,7 +1,37 @@
-# Keel API image. Build context = repo root; uses the shared root .dockerignore.
-# Same backend package as the worker image; differs only in CMD.
+# Keel API image — multi-stage build.
+# Stage 1 (node-builder):  build widget + admin UIs from the npm workspace.
+# Stage 2 (py-builder):    install Python deps.
+# Stage 3 (runtime):       lean Python image with both Python app + built UIs.
+#
+# Build context = repo root; uses the shared root .dockerignore.
 
-FROM python:3.12-slim AS builder
+# ── Stage 1: build frontend UIs (widget + admin) ─────────────────────────────
+FROM node:22-alpine AS node-builder
+
+WORKDIR /frontend
+
+# Copy only what the workspace install needs first (layer cache)
+COPY frontend/package.json ./package.json
+COPY frontend/ui/package.json ./ui/package.json
+COPY frontend/widget/package.json ./widget/package.json
+COPY frontend/admin/package.json ./admin/package.json
+# Portal has its own build (separate container); not needed here.
+# We add a stub so npm workspaces doesn't complain about a missing member.
+RUN mkdir -p portal && echo '{"name":"@keel/portal","private":true,"version":"0.0.0"}' > portal/package.json
+
+RUN npm install --workspaces --include-workspace-root
+
+# Copy source after install (layer cache for deps)
+COPY frontend/ui/ ./ui/
+COPY frontend/widget/ ./widget/
+COPY frontend/admin/ ./admin/
+
+# Build widget → widget/dist/ and admin → admin/dist/
+RUN npm run build --workspace=widget
+RUN npm run build --workspace=admin
+
+# ── Stage 2: Python dependency builder ───────────────────────────────────────
+FROM python:3.12-slim AS py-builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.11@sha256:eaa5f1a3305307aaf9e67fe2bbba1d85ebbb2d8a63bce23af21797bfafbe0f8b /uv /usr/local/bin/uv
 
@@ -10,15 +40,11 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_HTTP_TIMEOUT=300
 
-# Large wheels (botocore, sqlalchemy, etc.); 300s avoids download timeouts on slow links.
-
 WORKDIR /app
 
-# Install dependencies first (cached layer), without the project itself.
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Now add the source and install the project.
 COPY src ./src
 COPY alembic.ini ./
 COPY migrations ./migrations
@@ -26,22 +52,30 @@ COPY scripts ./scripts
 COPY data ./data
 RUN uv sync --frozen --no-dev
 
-
+# ── Stage 3: lean runtime ─────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
-# Bring uv into the runtime so `uv run alembic ...` / `uv run python -m scripts.seed` work.
 COPY --from=ghcr.io/astral-sh/uv:0.11@sha256:eaa5f1a3305307aaf9e67fe2bbba1d85ebbb2d8a63bce23af21797bfafbe0f8b /uv /usr/local/bin/uv
 
 WORKDIR /app
-COPY --from=builder /app /app
+
+# Python app
+COPY --from=py-builder /app /app
+
+# Built frontend assets — mounted at the paths FastAPI's StaticFiles expects
+# (see main.py _FRONTEND_ROOT / "widget" / "dist" and "admin" / "dist")
+COPY --from=node-builder /frontend/widget/dist ./frontend/widget/dist
+COPY --from=node-builder /frontend/admin/dist  ./frontend/admin/dist
+
+# Static brand assets (keel-icon.png, keel-logo.png) for widget.js to reference
+COPY frontend/static ./frontend/static
 
 ENV PATH="/app/.venv/bin:$PATH" \
     UV_PYTHON_DOWNLOADS=never
 
 EXPOSE 8000
 
-# Python-based healthcheck (no curl/apt dependency; venv python is on PATH).
-HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=5 \
     CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').getcode()==200 else 1)"]
 
 CMD ["uvicorn", "keel.main:app", "--host", "0.0.0.0", "--port", "8000"]
