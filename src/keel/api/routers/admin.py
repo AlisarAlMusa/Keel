@@ -274,10 +274,7 @@ async def get_widget_snippet(
             detail="tenant_id missing from token",
         )
     base_url = str(request.base_url).rstrip("/")
-    snippet = (
-        f'<script src="{base_url}/widget.js" '
-        f'data-widget-id="{tenant_id}"></script>'
-    )
+    snippet = f'<script src="{base_url}/widget.js" data-widget-id="{tenant_id}"></script>'
     return WidgetSnippetResponse(snippet=snippet, widget_id=tenant_id)
 
 
@@ -397,9 +394,7 @@ async def get_audit(
             .limit(limit)
         )
         total_row = await session.execute(
-            select(func.count(AuditLog.id)).where(
-                AuditLog.tenant_id == UUID(tenant_id)
-            )
+            select(func.count(AuditLog.id)).where(AuditLog.tenant_id == UUID(tenant_id))
         )
         audit_list = list(rows.scalars())
 

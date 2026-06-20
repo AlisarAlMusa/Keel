@@ -326,8 +326,7 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
 
             if scored and (ex_days or min_min > 0):
                 first_codes = (
-                    scored[0]["plan"].terms[0].course_codes
-                    if scored[0]["plan"].terms else []
+                    scored[0]["plan"].terms[0].course_codes if scored[0]["plan"].terms else []
                 )
                 section_notes: list[str] = []
                 if first_codes:

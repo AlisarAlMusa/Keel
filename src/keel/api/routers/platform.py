@@ -44,7 +44,6 @@ _log = get_logger(__name__)
 _REQUIRE_OPERATOR = require_role("platform_operator")
 
 
-
 # ---------------------------------------------------------------------------
 # Response schemas
 # ---------------------------------------------------------------------------
@@ -407,8 +406,7 @@ async def get_audit(
             action=r.action,
             target_tenant_id=str(r.target_tenant_id) if r.target_tenant_id else None,
             target_tenant_name=(
-                tenant_name_map.get(str(r.target_tenant_id))
-                if r.target_tenant_id else None
+                tenant_name_map.get(str(r.target_tenant_id)) if r.target_tenant_id else None
             ),
             detail=r.detail,
             created_at=r.created_at.isoformat(),

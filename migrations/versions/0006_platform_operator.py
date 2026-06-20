@@ -80,8 +80,7 @@ def upgrade() -> None:
     #    uniqueness when tenant_id IS NULL because NULL != NULL.
     # ------------------------------------------------------------------
     op.execute(
-        "CREATE UNIQUE INDEX uq_users_operator_email ON users(email) "
-        "WHERE tenant_id IS NULL"
+        "CREATE UNIQUE INDEX uq_users_operator_email ON users(email) WHERE tenant_id IS NULL"
     )
 
     # ------------------------------------------------------------------
@@ -112,9 +111,7 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_platform_audit_created_at", "platform_audit", ["created_at"])
-    op.create_index(
-        "ix_platform_audit_target_tenant_id", "platform_audit", ["target_tenant_id"]
-    )
+    op.create_index("ix_platform_audit_target_tenant_id", "platform_audit", ["target_tenant_id"])
     # platform_audit is intentionally NOT added to TENANT_OWNED_TABLES — no RLS.
 
     # ------------------------------------------------------------------
@@ -176,9 +173,7 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column("created_at", _TS, nullable=False, server_default=_NOW),
-        sa.CheckConstraint(
-            "role IN ('student', 'registrar')", name="ck_portal_user_role"
-        ),
+        sa.CheckConstraint("role IN ('student', 'registrar')", name="ck_portal_user_role"),
     )
     op.create_index("ix_portal_user_tenant_id", "portal_user", ["tenant_id"])
     op.create_index("ix_portal_user_email", "portal_user", ["email"])
@@ -261,8 +256,7 @@ def downgrade() -> None:
     op.drop_constraint("ck_operator_no_tenant", "users", type_="check")
     op.drop_constraint("ck_users_role", "users", type_="check")
     op.execute(
-        "ALTER TABLE users ADD CONSTRAINT ck_users_role "
-        "CHECK (role IN ('admin', 'student'))"
+        "ALTER TABLE users ADD CONSTRAINT ck_users_role CHECK (role IN ('admin', 'student'))"
     )
     op.drop_column("users", "hashed_password")
     op.alter_column("users", "tenant_id", nullable=False)

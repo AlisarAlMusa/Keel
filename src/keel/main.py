@@ -68,9 +68,7 @@ def _dsn_with_password(database_url: str, password: str) -> str:
     return database_url.replace(":placeholder@", f":{password}@", 1)
 
 
-async def _load_widget_config(
-    session_factory: object, app_state: object
-) -> None:
+async def _load_widget_config(session_factory: object, app_state: object) -> None:
     """Populate in-memory caches from widget_config and tenants tables.
 
     Uses SECURITY DEFINER functions so keel_app (NOBYPASSRLS) can read all
@@ -99,13 +97,10 @@ async def _load_widget_config(
             app_state.widget_persona_prompt_map = persona_prompt_map  # type: ignore[attr-defined]
 
             # tenant_names_all: (id, slug, name) — used by cross-tenant guardrail
-            name_rows = await session.execute(
-                text("SELECT id, slug, name FROM tenant_names_all()")
-            )
+            name_rows = await session.execute(text("SELECT id, slug, name FROM tenant_names_all()"))
             # list of (tenant_id, slug, display_name) tuples
             app_state.tenant_names = [  # type: ignore[attr-defined]
-                (str(tid), slug or "", tname or "")
-                for tid, slug, tname in name_rows
+                (str(tid), slug or "", tname or "") for tid, slug, tname in name_rows
             ]
             _log.info(
                 "widget_config_cache_loaded",
@@ -235,7 +230,10 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=[
-            "Authorization", "Content-Type", "X-Tenant-Id", "X-Admin-Token",
+            "Authorization",
+            "Content-Type",
+            "X-Tenant-Id",
+            "X-Admin-Token",
             "X-Idempotency-Key",
         ],
     )
@@ -258,6 +256,7 @@ def create_app() -> FastAPI:
             return FileResponse(str(js_path), media_type="application/javascript")
         # Fallback inline stub so the route always responds
         from fastapi.responses import Response as _Resp
+
         stub = _WIDGET_JS_STUB
         return _Resp(content=stub, media_type="application/javascript")
 

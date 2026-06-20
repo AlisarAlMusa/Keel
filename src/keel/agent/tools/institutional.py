@@ -287,9 +287,7 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
                 approved=True,
             )
             if not result.written:
-                return (
-                    f"Petition for {course_id} could not be filed: {result.message}"
-                )
+                return f"Petition for {course_id} could not be filed: {result.message}"
             return (
                 f"✅ **Petition filed with the registrar — {course_id}**\n\n{draft}\n\n"
                 "The registrar will review your request. The prerequisite block remains in place "

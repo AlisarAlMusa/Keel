@@ -139,12 +139,11 @@ def check_input(
             # Check slug (e.g. "summit") and display name (e.g. "Summit College")
             # Use word-boundary awareness: "summit" should not match "summiting"
             slug_hit = bool(
-                slug and len(slug) > 2
-                and re.search(r'\b' + re.escape(slug.lower()) + r'\b', msg_lower)
+                slug
+                and len(slug) > 2
+                and re.search(r"\b" + re.escape(slug.lower()) + r"\b", msg_lower)
             )
-            name_hit = bool(
-                name and len(name) > 2 and name.lower() in msg_lower
-            )
+            name_hit = bool(name and len(name) > 2 and name.lower() in msg_lower)
             if slug_hit or name_hit:
                 matched = slug if slug_hit else name
                 _log.warning(

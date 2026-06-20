@@ -127,11 +127,7 @@ async def chat(
     # --- Guardrails: input rail ---
     # Build list of other tenants' slugs+names for cross-tenant name detection.
     all_tenants: list[tuple[str, str, str]] = getattr(request.app.state, "tenant_names", [])
-    other_tenant_names = [
-        (slug, name)
-        for tid, slug, name in all_tenants
-        if tid != ctx.tenant_id
-    ]
+    other_tenant_names = [(slug, name) for tid, slug, name in all_tenants if tid != ctx.tenant_id]
     decision = check_input(
         body.message,
         tenant_id=ctx.tenant_id,
@@ -205,6 +201,7 @@ async def chat(
     try:
         from keel.config import get_settings as _get_settings
         from keel.infra.database.session import tenant_session as _ts
+
         _sf: async_sessionmaker[AsyncSession] = request.app.state.session_factory
         _model = _get_settings().gemini_model
         _tokens = (len(body.message) + len(safe_text)) // 4

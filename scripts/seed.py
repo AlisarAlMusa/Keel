@@ -1007,14 +1007,30 @@ async def _ingest_corpus(
 _PORTAL_USERS: dict[str, list[dict[str, Any]]] = {
     "northane": [
         # Students — email matches the demo student identity
-        {"email": "alisar@northane.edu", "role": "student", "student_email": "alex.morgan@northane.edu"},
-        {"email": "omar@northane.edu", "role": "student", "student_email": "jordan.lee@northane.edu"},
-        {"email": "lina@northane.edu", "role": "student", "student_email": "riley.chen@northane.edu"},
+        {
+            "email": "alisar@northane.edu",
+            "role": "student",
+            "student_email": "alex.morgan@northane.edu",
+        },
+        {
+            "email": "omar@northane.edu",
+            "role": "student",
+            "student_email": "jordan.lee@northane.edu",
+        },
+        {
+            "email": "lina@northane.edu",
+            "role": "student",
+            "student_email": "riley.chen@northane.edu",
+        },
         # Registrar
         {"email": "registrar@northane.edu", "role": "registrar", "student_email": None},
     ],
     "summit": [
-        {"email": "maya@summit.edu", "role": "student", "student_email": "taylor.brooks@summit.edu"},
+        {
+            "email": "maya@summit.edu",
+            "role": "student",
+            "student_email": "taylor.brooks@summit.edu",
+        },
         {"email": "jad@summit.edu", "role": "student", "student_email": "morgan.patel@summit.edu"},
         {"email": "sara@summit.edu", "role": "student", "student_email": "casey.wu@summit.edu"},
         {"email": "registrar@summit.edu", "role": "registrar", "student_email": None},
@@ -1334,6 +1350,7 @@ async def main() -> None:
 
         # Auth accounts: operator, tenant admins, portal users, widget origins.
         from keel.config import get_settings as _gs
+
         _s = _gs()
         await _seed_auth_accounts(
             session_factory,

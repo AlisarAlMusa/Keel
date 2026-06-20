@@ -66,9 +66,7 @@ def _allowed_origins_for(request: Request, tenant_id: str) -> list[str]:
     PUT /admin/widget-config.  Fallback: empty list → all origins blocked.
     For dev convenience if the map is not populated yet, allow everything.
     """
-    origins_map: dict[str, list[str]] = getattr(
-        request.app.state, "widget_origins_map", {}
-    )
+    origins_map: dict[str, list[str]] = getattr(request.app.state, "widget_origins_map", {})
     return origins_map.get(tenant_id, [])
 
 
@@ -174,9 +172,7 @@ async def db_with_tenant(
             yield session
         finally:
             try:
-                await session.execute(
-                    text("SELECT set_config('app.tenant_id', '', true)")
-                )
+                await session.execute(text("SELECT set_config('app.tenant_id', '', true)"))
             except Exception:  # noqa: BLE001 — best-effort reset; session may be closed
                 pass
 

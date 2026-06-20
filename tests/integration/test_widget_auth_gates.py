@@ -84,8 +84,13 @@ def test_wrong_scheme_returns_401() -> None:
 
 def test_bad_signature_returns_401() -> None:
     wrong_secret_token = jwt.encode(
-        {"tenant_id": _TENANT_A, "student_id": _STUDENT_A,
-         "aud": "keel-widget", "iat": int(time.time()), "exp": int(time.time()) + 900},
+        {
+            "tenant_id": _TENANT_A,
+            "student_id": _STUDENT_A,
+            "aud": "keel-widget",
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 900,
+        },
         "wrong-secret",
         algorithm="HS256",
     )
@@ -103,8 +108,13 @@ def test_expired_token_returns_401() -> None:
 
 def test_wrong_audience_returns_401() -> None:
     wrong_aud_token = jwt.encode(
-        {"tenant_id": _TENANT_A, "student_id": _STUDENT_A,
-         "aud": "wrong-audience", "iat": int(time.time()), "exp": int(time.time()) + 900},
+        {
+            "tenant_id": _TENANT_A,
+            "student_id": _STUDENT_A,
+            "aud": "wrong-audience",
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 900,
+        },
         _SECRET,
         algorithm="HS256",
     )
@@ -135,6 +145,7 @@ def test_valid_token_returns_200_with_correct_claims() -> None:
 
 def test_disallowed_origin_returns_403() -> None:
     """When a tenant has configured origins, a foreign origin is rejected."""
+
     class _MockRequest:
         headers = {"origin": "https://attacker.example.com"}
 
@@ -174,6 +185,7 @@ def test_allowed_origin_passes() -> None:
 
 def test_no_configured_origins_allows_all() -> None:
     """Dev mode: empty allowed list → any origin passes (fail-open for dev)."""
+
     class FakeRequest:
         headers = {"origin": "http://localhost:3000"}
         app = MagicMock()
