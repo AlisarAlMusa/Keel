@@ -35,8 +35,32 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     # Transfer auth function ownership to postgres so SECURITY DEFINER bypasses RLS.
     # keel_app has NOBYPASSRLS, so functions owned by keel_app can't read across tenants.
-    op.execute("ALTER FUNCTION keel_find_user_by_email(text) OWNER TO postgres")
-    op.execute("ALTER FUNCTION portal_find_by_email(text) OWNER TO postgres")
+    # Wrapped in DO blocks: keel_app can't SET ROLE postgres in CI; the ownership
+    # change is a no-op there but applies when migrations run as a superuser.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            ALTER FUNCTION keel_find_user_by_email(text) OWNER TO postgres;
+        EXCEPTION WHEN insufficient_privilege THEN
+            RAISE WARNING 'keel_find_user_by_email: cannot set OWNER TO postgres '
+                          '(insufficient privilege — run as superuser to apply)';
+        END;
+        $$
+        """
+    )
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            ALTER FUNCTION portal_find_by_email(text) OWNER TO postgres;
+        EXCEPTION WHEN insufficient_privilege THEN
+            RAISE WARNING 'portal_find_by_email: cannot set OWNER TO postgres '
+                          '(insufficient privilege — run as superuser to apply)';
+        END;
+        $$
+        """
+    )
 
     op.execute("DROP POLICY IF EXISTS tenant_isolation ON users")
     op.execute(
