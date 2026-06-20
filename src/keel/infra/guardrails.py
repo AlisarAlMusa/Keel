@@ -136,9 +136,15 @@ def check_input(
     # --- Cross-tenant probe rail (name/slug-based) ---
     if other_tenant_names:
         for slug, name in other_tenant_names:
-            # Check both slug (e.g. "summit") and display name (e.g. "Summit College")
-            slug_hit = slug and len(slug) > 2 and slug.lower() in msg_lower
-            name_hit = name and len(name) > 2 and name.lower() in msg_lower
+            # Check slug (e.g. "summit") and display name (e.g. "Summit College")
+            # Use word-boundary awareness: "summit" should not match "summiting"
+            slug_hit = bool(
+                slug and len(slug) > 2
+                and re.search(r'\b' + re.escape(slug.lower()) + r'\b', msg_lower)
+            )
+            name_hit = bool(
+                name and len(name) > 2 and name.lower() in msg_lower
+            )
             if slug_hit or name_hit:
                 matched = slug if slug_hit else name
                 _log.warning(
