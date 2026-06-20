@@ -41,7 +41,18 @@ def upgrade() -> None:
           SELECT count(*) FROM students WHERE tenant_id = p_tenant_id;
         $$
     """)
-    op.execute("ALTER FUNCTION platform_count_students(uuid) OWNER TO postgres")
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            ALTER FUNCTION platform_count_students(uuid) OWNER TO postgres;
+        EXCEPTION WHEN insufficient_privilege THEN
+            RAISE WARNING 'platform_count_students: cannot set OWNER TO postgres '
+                          '(insufficient privilege — run as superuser to apply)';
+        END;
+        $$
+        """
+    )
     op.execute("GRANT EXECUTE ON FUNCTION platform_count_students(uuid) TO keel_app")
 
     op.execute("""
@@ -55,7 +66,18 @@ def upgrade() -> None:
           WHERE tenant_id = p_tenant_id AND role IN ('tenant_admin', 'admin');
         $$
     """)
-    op.execute("ALTER FUNCTION platform_count_admins(uuid) OWNER TO postgres")
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            ALTER FUNCTION platform_count_admins(uuid) OWNER TO postgres;
+        EXCEPTION WHEN insufficient_privilege THEN
+            RAISE WARNING 'platform_count_admins: cannot set OWNER TO postgres '
+                          '(insufficient privilege — run as superuser to apply)';
+        END;
+        $$
+        """
+    )
     op.execute("GRANT EXECUTE ON FUNCTION platform_count_admins(uuid) TO keel_app")
 
 
