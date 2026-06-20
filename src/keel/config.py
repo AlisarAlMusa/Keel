@@ -66,13 +66,14 @@ class Settings(BaseSettings):
     vault_secret_path: str = "keel/app"
 
     # --- LLM models (names are not secret; keys come from Vault) ---
-    # Fallback chain: high-quota primary → reserve.
-    #   gemini-1.5-flash   → 1500 RPD free tier (primary — plenty for demo)
-    #   gemini-1.5-flash-8b → 4000 RPD free tier (fallback — virtually unlimited)
-    # gemini-2.5-flash has only 20 RPD on free tier — exhausted in minutes of testing.
-    gemini_model: str = "gemini-1.5-flash"
-    gemini_fallback_models: list[str] = ["gemini-1.5-flash-8b", "gemini-1.5-pro"]
-    gemini_lite_model: str = "gemini-1.5-flash-8b"
+    # Fallback chain verified against actual API quota screen:
+    #   gemini-3.1-flash-lite → 500 RPD (primary — highest quota available)
+    #   gemini-3-flash        → 20 RPD  (fallback — fresh at demo time)
+    #   gemini-2.5-flash-lite → 20 RPD  (last resort)
+    # gemini-2.5-flash has 20 RPD and was already exhausted (36 used).
+    gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_fallback_models: list[str] = ["gemini-3-flash", "gemini-2.5-flash-lite"]
+    gemini_lite_model: str = "gemini-3.1-flash-lite"
 
     # --- RAG / embedding knobs (all tuneable without code change) ---
     embed_model: str = "embed-multilingual-v3.0"

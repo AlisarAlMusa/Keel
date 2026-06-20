@@ -26,9 +26,9 @@ x-app-env: &app-env
   VAULT_SECRET_PATH: ${VAULT_SECRET_PATH}
   # LLM model names (non-secret; keys come from Vault)
   # gemini-2.5-flash = 20 RPD free tier — exhausted in minutes; use 1.5-flash (1500 RPD)
-  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
-  GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-["gemini-1.5-flash-8b","gemini-1.5-pro"]}
-  GEMINI_LITE_MODEL: ${GEMINI_LITE_MODEL:-gemini-1.5-flash-8b}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-lite}
+  GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-["gemini-3-flash","gemini-2.5-flash-lite"]}
+  GEMINI_LITE_MODEL: ${GEMINI_LITE_MODEL:-gemini-3.1-flash-lite}
   # RAG knobs
   EMBED_MODEL: ${EMBED_MODEL:-embed-multilingual-v3.0}
   EMBED_DIM: ${EMBED_DIM:-1024}
