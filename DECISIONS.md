@@ -555,3 +555,247 @@ last char before `::`). This was a latent bug across `outbox_write`, `audit_writ
 `insert_pending`, `save_plan`, and `swap_course`. Discovered and fixed in Phase 4;
 verified by repro: `sa.text("VALUES (:payload::jsonb)")._bindparams` → `{'payloa'}`
 vs `CAST(:payload AS jsonb)` → `{'payload'}`.
+
+
+## Phase 5 — Frontend, Service Architecture, Auth Boundaries
+
+### D-P5-000 — Boundary summary (what Keel is vs. what the SIS is)
+
+These are the foundational truths that all Phase 5 decisions follow from:
+
+- **Keel is an AI layer over the SIS, not a SIS.** System of record = SIS. Keel adds planning, advising, prediction, and safe registration on top.
+- **Two systems, one API contract.** Keel and the SIS are separate (separate DBs in production), linked by a per-tenant adapter — never a shared database. Only Keel's own surfaces (admin + widget) share Keel's DB.
+- **No catalog/student CRUD in Keel.** Structured SIS data is seeded in the demo; registrar-managed in the SIS in production. Keel admin manages only Keel-owned config + RAG.
+- **Keel admin feeds RAG prose only** (`catalog.md`, `policy.md`). Structured rows (courses/prereqs/sections/students/rules incl. credit caps, holds, windows) are SIS-domain → seeded → read by the engine.
+- **Adapter is documented now, implemented after the demo.** The engine reads SIS data through a repository boundary; a real SIS adapter is a post-demo swap. Refactoring it pre-demo is risk without reward.
+- **Auth: the university authenticates the student.** The portal backend vouches via a server-side token mint; Keel never trusts a client-supplied `student_id`. Token = widget-only. Lazy mint on chat open.
+- **Mock SIS portal, two roles** (student + registrar), both reading SIS-domain tables directly. Pages are read-only views of real seed data with dead write buttons; the request queue is the one functional registrar action.
+- **Request workflow is SIS-domain.** The agent drafts + submits; the registrar approves in the (mock) SIS portal. This dissolves the "request status" question — everyone reads it as plain SIS data.
+- **Provenance via audit, not SIS schema changes.** "via Keel" comes from Keel's audit log + the SIS's existing transaction-source field; mocked with a `source` column.
+- **Manual Drop cut.** Write-proof = the widget enrolling and the read-only schedule updating.
+- **One Postgres in the demo**, two logical domains (SIS-domain + Keel-domain), tenant-isolated by RLS. No physical split.
+
+---
+
+### D-P5-001 — Mock SIS portal is a standalone microservice (Node/Express + React)
+
+**Decision.** The mock SIS portal runs as its own Docker container: a Node.js service
+(Express backend + Vite-built React SPA) entirely separate from `keel-api`. It exposes
+`/api/*` portal routes and serves the portal SPA at `/`. Its only call into Keel is the
+widget token mint (`POST /internal/mint-token`) — a single server-to-server request
+protected by `portal_service_secret`.
+
+**Why a separate container.** The portal IS the SIS, not Keel. In production a
+university's SIS portal is a completely different system — different team, different
+codebase, different deployment. The container boundary makes that separation concrete and
+defensible. If the portal shared the Keel API container, the demo would imply Keel owns
+the SIS portal, which contradicts the core architecture claim.
+
+**Why Node/Express, not a second FastAPI.** The portal has no AI, no async ML inference,
+no pgvector. Its workload is: serve static files + small SQL reads + one outbound HTTP
+call. Node/Express is the minimal runtime for this; adding a second Python/uvicorn stack
+would be over-engineering with no payoff. A real university SIS portal is typically a
+Java/Rails/Node app, not a Python AI service — Node aligns with that reality.
+
+**Rejected.** (1) Portal routes inside `keel-api` — blurs the SIS/Keel boundary; makes
+the demo argument harder to defend. (2) Portal frontend as its own third container
+(separate from the portal backend) — see D-P5-002.
+
+---
+
+### D-P5-002 — Portal frontend and portal backend are co-located in one container
+
+**Decision.** The portal container runs Express, which both serves the Vite-built React
+SPA (as static files) and handles the portal API routes (`/api/portal/*`). There is no
+separate container or CDN for the portal React app.
+
+**Why they belong together.**
+
+1. **Session cookie security.** The portal session cookie is `HttpOnly` and set by the
+   Express backend. If the SPA were served from a different origin, the browser would
+   block the cookie on all cross-origin requests — making the session unreadable. Same
+   container = same origin = no `SameSite`/CORS cookie problems.
+2. **This is how a monolithic SIS works.** A university's SIS portal is one deployed
+   application that serves its own pages and handles its own auth. We are mocking a
+   monolith, not a microservices SIS frontend/backend split — the mock should match the
+   shape of the real thing.
+3. **No benefit from splitting.** The only reason to separate a frontend container is to
+   serve it via CDN or to have independent scaling. Neither applies in a
+   single-tenant demo environment. An extra container would add an nginx reverse proxy,
+   CORS configuration, and two deployment artifacts for zero architectural gain.
+
+**Rejected.** Separate frontend container for the portal — adds serving complexity and
+CORS surface area with no benefit at demo scale.
+
+---
+
+### D-P5-003 — Widget iframe and Admin-UI served from keel-api; widget.js runs on the portal page
+
+**Decision.** The Vite-built `widget/dist/` and `admin/dist/` are mounted as
+`StaticFiles` on `keel-api` at `/widget/` and `/admin-ui/`. `widget.js` is also served
+from `keel-api` at `/widget.js`. No additional container for either frontend.
+
+**The token flow (the key mechanism):**
+`widget.js` is served from keel-api but is **loaded via a `<script>` tag on the portal
+page** — it therefore runs inside the portal page's JavaScript execution context.
+Because of this:
+
+1. `widget.js` uses `window.location.origin` (the portal's origin) to call
+   `GET /api/portal/keel-token` — a **same-origin request from the portal page**. The
+   session cookie is included automatically. No cross-origin cookie complexity.
+2. Portal Express backend verifies the session, calls `POST /internal/mint-token` on
+   keel-api (server-to-server with `portal_service_secret`), and returns the JWT.
+3. `widget.js` opens the widget iframe at `keel-api/widget/` and **postMessages the
+   token** to the iframe (with an origin check). The iframe stores it in memory.
+4. The widget iframe (on keel-api origin) calls `POST /chat` at the same origin — no
+   CORS needed for API calls.
+
+This is exactly how Intercom, Stripe, and Zendesk embeddable widgets work: the
+provider's script runs on the host page's origin, uses the host's session to authenticate,
+and opens an iframe at the provider's origin for the actual product surface.
+
+**Why widget iframe stays on keel-api origin.** Same-origin between the iframe and
+`/chat` means the Bearer token only needs an `Authorization` header — no credential
+cookies, no complex CORS. The widget token in memory is inaccessible to the portal page
+(cross-origin iframe isolation) and disappears when the iframe is torn down.
+
+**Why admin-ui stays in keel-api.** The admin console only calls `/admin/*` on keel-api.
+Serving it elsewhere adds a container boundary where there is no domain boundary.
+
+**Rejected.** Serving the widget iframe from the portal container — would make `/chat`
+cross-origin for the iframe, requiring `Authorization` header CORS plus a more complex
+token-passing story. Serving admin-ui in a separate container — just static files, no
+reason for a process boundary.
+
+---
+
+### D-P5-004 — npm workspaces monorepo for all three frontends
+
+**Decision.** `frontend/` is an npm workspaces root. Four packages live under it:
+`ui/` (shared primitives), `widget/`, `admin/`, and `portal/`. One `npm install` at
+the root installs all four; `react`, `typescript`, `vite`, and shared UI deps are
+hoisted to the root `node_modules` and deduplicated.
+
+**Why a monorepo.** All three frontends use the same design token set, the same
+component primitives (`Badge`, `Button`, `Card`, `Table`, `StreamingText`), and the same
+TypeScript/Vite setup. Without workspaces, each app would carry its own copy of these
+deps (~150 MB × 3). The monorepo makes sharing the `ui/` library trivial (`import { Badge }
+from '@keel/ui'`) with zero duplication.
+
+**Why not three completely independent `package.json` files.** Each app can independently
+vary its version of any dep by adding it as a local override — workspaces don't prevent
+that. But common deps (react, vite, typescript, the design system) are declared once,
+locked once, and updated once. This is standard practice (Turborepo, Nx, pnpm workspaces)
+and the right call for three apps that share a design system.
+
+**Rejected.** Three independent npm projects — 3× install time, 3× lockfile drift risk,
+shared components would need copy-pasting or a private npm registry.
+
+---
+
+### D-P5-005 — Service-to-service auth: portal_service_secret (HS256 Bearer JWT)
+
+**Decision.** The portal Express backend calls `POST /internal/mint-token` on keel-api
+to get a widget JWT for the authenticated student. This call carries a Bearer JWT signed
+with `portal_service_secret` (from Vault). keel-api verifies the service JWT before
+minting. The browser never sees `portal_service_secret`; the exchange is entirely
+server-to-server.
+
+**Why a dedicated shared secret, not the widget_token_secret.** `widget_token_secret`
+signs tokens that arrive from browsers — a different trust level. Using the same secret
+for service calls and widget tokens would mean a compromised widget token could impersonate
+the portal service. Separate secrets = separate trust domains = breach containment.
+
+**Why a JWT over a plain shared API key.** A JWT can carry a short `exp` (e.g., 60 s)
+so a replayed service token has a narrow attack window. A plain shared API key is
+permanent until rotated. Both are from Vault; the JWT adds a time-bound property for
+free.
+
+**Rejected.** mTLS between portal and keel-api — correct for production with a service
+mesh; over-engineered for a capstone demo. The shared secret + JWT exp provides
+adequate security for a demo network where both containers share a Docker Compose
+network.
+
+---
+
+### D-P5-006 — Widget token: lazy-minted by widget.js on the portal page, postMessaged to iframe, memory-only
+
+**Decision.** Launcher button loads on page load (no token). On click, `widget.js`
+(running on the portal page) fetches the token from the portal backend (same-origin,
+session cookie included), opens the iframe, and **postMessages** the token to the iframe
+with an explicit origin check. Inside the iframe, the token lives in a closed-over
+JavaScript variable. It is never written to localStorage, sessionStorage, or a cookie.
+
+**Why postMessage rather than URL query param.** Passing the token in the iframe `src`
+URL (`?token=…`) puts it in the browser's address bar and history, and in server logs.
+postMessage with an origin check (`event.origin === KEEL_API_ORIGIN`) is the
+browser-native inter-frame messaging channel — invisible outside the two frames,
+dropped if the origin doesn't match.
+
+**Why lazy.** Minting at page load attaches a live 15-min credential to every page view.
+Lazy mint means the credential exists only while chat is open — minimum exposure window.
+
+**Why memory-only.** localStorage survives tab close and is readable by any same-origin
+script (XSS pivot). sessionStorage is also script-readable. A variable inside the iframe
+is cross-origin-isolated — the portal page cannot read it — and disappears when the
+iframe is torn down or the tab is closed.
+
+**The iframe's origin check.** The widget iframe only accepts postMessage events from
+`KEEL_API_ORIGIN` (the keel-api URL passed via the `data-keel-url` attribute on the
+`<script>` tag). A rogue frame on another origin cannot inject a token.
+
+**Rejected.** URL param — in browser history and server logs. localStorage — XSS risk,
+survives session. Cookie from keel-api to the iframe — would require `SameSite=None;
+Secure` and a more complex setup for cross-origin cookie use.
+
+---
+
+## Phase 5 Addendum — Platform Operator, Admin/Operator Auth, Second Tenant Portal
+
+### D-A-001 — Third role restored: platform operator
+
+**Decision.** `platform_operator` is added to the `users` table role set. The operator identity carries **no `tenant_id`** (column is nullable from migration 0006), enforced by two DB check constraints: `ck_operator_no_tenant` and `ck_admin_has_tenant`. Operator endpoints live under `/platform/*` and are guarded by `require_role("platform_operator")`.
+
+**Rationale.** Without the operator, there is no way to provision / suspend / erase tenants short of direct DB access. The operator is a "controlled doorway, not god mode" — it touches only platform-domain tables and aggregate functions, never tenant content.
+
+**Rejected.** A superuser/god-mode role that can read all tenant data — structural isolation invariant would be gone. A separate admin microservice — unnecessary complexity for a demo.
+
+---
+
+### D-A-002 — Auth = email + password for admin and operator
+
+**Decision.** Both `tenant_admin` and `platform_operator` authenticate via `POST /auth/login` with email + bcrypt password. The issued JWT carries `{ sub, role, iat, exp }` plus `tenant_id` for admins (omitted for operators). The admin login applies `assert_tenant_active` — a suspended tenant's admin cannot log into Keel.
+
+**Rationale.** A tenant-id-only auth (the previous X-Admin-Token approach) gives no per-person accountability and is semi-public (it ships in widget snippets). Email + password is the standard web auth pattern and maps cleanly to the existing `users` table.
+
+**Rejected.** Keeping X-Admin-Token — not a real auth mechanism, fails the "per-person accountability" requirement. fastapi-users — full framework for our two-role use case is over-engineering; a single endpoint using bcrypt + PyJWT is sufficient.
+
+---
+
+### D-A-003 — Portal login is real email + password, portal-domain only
+
+**Decision.** `POST /portal/login` now accepts `{ email, password }`. The portal server calls `portal_find_by_email()` (SECURITY DEFINER, bypasses RLS for the pre-session lookup), verifies bcrypt, asserts the account's tenant_id matches `PORTAL_TENANT` (the instance env var), and sets the session cookie. Keel's `users` table is untouched — this is portal-domain auth only.
+
+**No suspend check at `/portal/login`.** Suspension darkens Keel (the AI layer), not the university's SIS. Students still log into the portal and see My Schedule even when Keel is suspended. The suspend gate fires at `/portal/keel-token` (widget token mint) and `/chat`.
+
+**Rejected.** Checking suspend at login — Keel has no authority over the SIS portal. Storing portal passwords in Keel's `users` table — blurs the SIS/Keel domain boundary that is the core architecture claim.
+
+---
+
+### D-A-004 — Second tenant portal = one image, two compose services
+
+**Decision.** `portal-northane` (:3001) and `portal-summit` (:3002) are two compose services from the **same Dockerfile**, differentiated only by env (`PORTAL_TENANT`, `PORT`, `VITE_UNIVERSITY_NAME`, `VITE_UNIVERSITY_INITIAL`). Each tenant's `widget_config.allowed_origins` is seeded with its portal origin (`http://localhost:3001` / `:3002`).
+
+**Rationale.** Two origins make the Keel origin-check demonstrable across tenants — a Northane token replayed on Summit's origin is rejected. One codebase means Summit "follows Northane" by construction; no forked components.
+
+**Rejected.** Forking the portal frontend per tenant — code drift, double maintenance. A single portal serving both tenants — two origins cannot be demonstrated.
+
+---
+
+### D-A-005 — Erase is async, confirmation-gated, idempotent; platform_audit survives
+
+**Decision.** `POST /platform/tenants/{id}/erase` validates `confirm_name == tenant.name`, writes a `platform_audit('erase', requested=True)` row, then enqueues `erase_tenant_job` via RQ. The worker cascade-deletes every row carrying `tenant_id` (including `portal_user` rows for that tenant), then deletes MinIO objects prefixed by the tenant_id, then deletes the tenant row. `platform_audit` uses `ON DELETE SET NULL` on the FK so audit rows survive the tenant deletion. Rerun on an already-erased tenant is a no-op.
+
+**Rejected.** Synchronous erase in the request path — too slow and blocks the response for large tenants. Silent erase without confirmation — unrecoverable mistake if tenant name is mistyped.
+
+---

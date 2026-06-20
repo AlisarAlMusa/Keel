@@ -1,12 +1,18 @@
 """Chat endpoint — the single student-facing interaction route.
 
-Request flow:
-  1. Mint request_id at entry; propagate through all calls.
-  2. Run input guardrails (injection + cross-tenant refusal).
-  3. Build ContextEnvelope and call the router.
-  4. Redact and return the response.
+Phase 5: wrapped with widget auth (get_widget_context + verify_origin +
+db_with_tenant).  student_id and tenant_id now come ONLY from the verified
+JWT — the request body carries only the message.
 
-No business logic here — routers parse, authorize, delegate to services, serialize.
+Request flow:
+  1. get_widget_context  — verify Bearer JWT → WidgetContext
+  2. verify_origin_or_403 — Origin in allowed list, else 403
+  3. Mint request_id; run input guardrails.
+  4. Build ContextEnvelope from the verified context + body.message.
+  5. Route (classifier → workflow | agent).
+  6. Redact and return.
+
+No business logic here — routers parse, authorize, delegate to services.
 """
 
 from __future__ import annotations
@@ -16,10 +22,15 @@ import uuid
 from typing import Annotated, Any
 
 import cohere
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from keel.api.auth import WidgetContext, get_widget_context, verify_origin_or_403
+from keel.api.deps import get_session
+from keel.api.routers.auth_admin import assert_tenant_active
 from keel.domain.schemas import ContextEnvelope, RouterResult, StudentPreference
 from keel.infra.guardrails import check_input, redact
 from keel.infra.model_client import ModelClient
@@ -37,9 +48,7 @@ _log = get_logger(__name__)
 
 class ChatRequest(BaseModel):
     message: str
-    student_id: str
-    session_id: str
-    tenant_id: str
+    session_id: str  # client-generated; used for Redis memory key
 
 
 class ChatResponse(BaseModel):
@@ -49,7 +58,7 @@ class ChatResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Dependency helpers
+# Dependency helpers (singletons from app.state)
 # ---------------------------------------------------------------------------
 
 
@@ -86,47 +95,84 @@ def _get_fallback_threshold(request: Request) -> float:
 async def chat(
     body: ChatRequest,
     request: Request,
+    ctx: Annotated[WidgetContext, Depends(get_widget_context)],
     model_client: Annotated[ModelClient, Depends(_get_model_client)],
     llm_lite: Annotated[ChatGoogleGenerativeAI, Depends(_get_llm_lite)],
+    session: Annotated[Any, Depends(get_session)] = None,
 ) -> ChatResponse:
-    """Single student message → guardrails → router → response."""
+    """Single student message → guardrails → router → response.
+
+    student_id and tenant_id come from the verified JWT (ctx), never from body.
+    """
+    # Origin check (defense-in-depth; JWT already verifies identity)
+    verify_origin_or_403(request, ctx.tenant_id)
+
+    # Suspend gate: if the tenant is suspended, the widget goes dark (403).
+    # Note: tenants table has no RLS, so a plain session suffices here.
+    if session is not None:
+        await assert_tenant_active(ctx.tenant_id, session)
+
     request_id = str(uuid.uuid4())
     prompt_hash = hashlib.sha256(body.message.encode()).hexdigest()[:16]
 
     _log.info(
         "chat.request",
         request_id=request_id,
-        tenant_id=body.tenant_id,
-        student_id=body.student_id,
+        tenant_id=ctx.tenant_id,
+        student_id=ctx.student_id,
         session_id=body.session_id,
-        prompt_hash=prompt_hash,  # never log full text
+        prompt_hash=prompt_hash,
     )
 
     # --- Guardrails: input rail ---
-    decision = check_input(body.message, tenant_id=body.tenant_id)
+    # Build list of other tenants' slugs+names for cross-tenant name detection.
+    all_tenants: list[tuple[str, str, str]] = getattr(request.app.state, "tenant_names", [])
+    other_tenant_names = [(slug, name) for tid, slug, name in all_tenants if tid != ctx.tenant_id]
+    decision = check_input(
+        body.message,
+        tenant_id=ctx.tenant_id,
+        other_tenant_names=other_tenant_names,
+    )
     if not decision.safe:
         _log.warning(
             "chat.guardrail_refused",
             request_id=request_id,
             reason=decision.reason,
-            tenant_id=body.tenant_id,
+            tenant_id=ctx.tenant_id,
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Message refused by content guardrails: {decision.reason}",
+        if decision.reason == "cross_tenant_probe":
+            refusal = (
+                "I can only access information for your institution. "
+                "Accessing data from other universities is not permitted — "
+                "each institution's data is private and isolated."
+            )
+        else:
+            refusal = (
+                "I'm not able to process that request. "
+                "I'm here to help with your courses, plans, and academic advising."
+            )
+        return ChatResponse(
+            response=refusal,
+            request_id=request_id,
+            router=RouterResult(label="guardrail", confidence=1.0, route_to_agent=False),
         )
 
-    # --- Build envelope ---
+    # --- Build envelope (identity from JWT, never from body) ---
+    persona_prompt_map: dict[str, str] = getattr(request.app.state, "widget_persona_prompt_map", {})
+    persona_prompt = persona_prompt_map.get(
+        ctx.tenant_id, "You are Keel, a helpful AI academic advisor."
+    )
     envelope = ContextEnvelope(
-        tenant_id=body.tenant_id,
-        student_id=body.student_id,
+        tenant_id=ctx.tenant_id,
+        student_id=ctx.student_id,
         session_id=body.session_id,
         request_id=request_id,
         message=body.message,
         preferences=StudentPreference(),
+        persona_prompt=persona_prompt,
     )
 
-    # --- Route (tools open their own DB sessions via session_factory in AgentDeps) ---
+    # --- Route ---
     agent_run = _get_agent_run(request)
     fallback_threshold = _get_fallback_threshold(request)
 
@@ -138,7 +184,7 @@ async def chat(
         fallback_threshold=fallback_threshold,
     )
 
-    # --- Guardrails: output rail (redact) ---
+    # --- Guardrails: output rail ---
     safe_text = redact(router_response.text)
     content_hash = hashlib.sha256(safe_text.encode()).hexdigest()[:16]
 
@@ -150,6 +196,32 @@ async def chat(
         routed_to_agent=router_response.routed_to_agent,
         content_hash=content_hash,
     )
+
+    # --- Record usage event (best-effort — never fail the response) ---
+    try:
+        from keel.config import get_settings as _get_settings
+        from keel.infra.database.session import tenant_session as _ts
+
+        _sf: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+        _model = _get_settings().gemini_model
+        _tokens = (len(body.message) + len(safe_text)) // 4
+        _cost = round(_tokens * 0.000_000_18, 8)
+        async with _ts(_sf, uuid.UUID(ctx.tenant_id)) as _usess:
+            await _usess.execute(
+                text(
+                    "INSERT INTO usage_event (tenant_id, kind, model, tokens, cost_estimate) "
+                    "VALUES (:tid, :kind, :model, :tokens, :cost)"
+                ),
+                {
+                    "tid": ctx.tenant_id,
+                    "kind": "agent" if router_response.routed_to_agent else "classifier",
+                    "model": _model,
+                    "tokens": _tokens,
+                    "cost": _cost,
+                },
+            )
+    except Exception as _ue:  # noqa: BLE001
+        _log.warning("chat.usage_event_failed", error=str(_ue))
 
     return ChatResponse(
         response=safe_text,

@@ -74,10 +74,19 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[UUID] = _pk()
-    tenant_id: Mapped[UUID] = _tenant_fk()
+    # Nullable: platform_operator has no tenant scope (migration 0006)
+    tenant_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     email: Mapped[str] = mapped_column(Text, nullable=False)
+    # roles: 'admin' | 'student' | 'tenant_admin' | 'platform_operator'
     role: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set for tenant_admin and platform_operator only (bcrypt hash)
+    hashed_password: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -239,6 +248,8 @@ class Enrollment(Base):
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'enrolled'"))
     idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    # Phase 5: provenance — 'keel' | 'manual' | 'sis'. Drives the "via Keel" badge.
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'sis'"))
     created_at: Mapped[datetime] = _created_at()
 
 
@@ -436,6 +447,115 @@ class Advisor(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+# ---------------------------------------------------------------------------
+# Phase 5 additions — UsageEvent, WidgetConfig
+# ---------------------------------------------------------------------------
+
+
+class UsageEvent(Base):
+    """Cost-tracking row written on every LLM/embedding call (spec §6).
+
+    kind: 'llm' | 'embedding'
+    cost_estimate: USD approximation based on token counts.
+    """
+
+    __tablename__ = "usage_event"
+
+    id: Mapped[UUID] = _pk()
+    tenant_id: Mapped[UUID] = _tenant_fk()
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    cost_estimate: Mapped[Decimal] = mapped_column(
+        Numeric(12, 8), nullable=False, server_default=text("0")
+    )
+    model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class WidgetConfig(Base):
+    """Per-tenant Keel widget configuration (spec §3).
+
+    One row per tenant. Safety rails are NOT here — they are hardcoded.
+    allowed_origins drives the origin check (spec §1 verify_origin_or_403).
+    """
+
+    __tablename__ = "widget_config"
+
+    id: Mapped[UUID] = _pk()
+    tenant_id: Mapped[UUID] = _tenant_fk()
+    persona: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        server_default=text(
+            "'You are Keel, a helpful AI academic advisor. "
+            "You help students plan their courses thoughtfully and safely.'"
+        ),
+    )
+    persona_name: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'Keel'"))
+    allowed_origins: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    enabled_tools: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 addendum — PlatformAudit, PortalUser
+# ---------------------------------------------------------------------------
+
+
+class PlatformAudit(Base):
+    """Platform operator action log — NOT RLS-scoped; survives tenant erase.
+
+    Written on every provision / suspend / unsuspend / erase action by the
+    platform operator.  target_tenant_id uses ON DELETE SET NULL so the row
+    persists even after the tenant is erased.
+    """
+
+    __tablename__ = "platform_audit"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(Text, nullable=False)
+    target_tenant_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True
+    )
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class PortalUser(Base):
+    """SIS/portal-domain login credentials — NOT a Keel auth principal.
+
+    Holds email + bcrypt password for portal students and registrars.
+    Completely separate from Keel's users table; RLS-scoped by tenant_id.
+    student_id links to the SIS student record (NULL for registrar).
+    """
+
+    __tablename__ = "portal_user"
+
+    id: Mapped[UUID] = _pk()
+    tenant_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(Text, nullable=False)  # 'student' | 'registrar'
+    email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    hashed_password: Mapped[str] = mapped_column(Text, nullable=False)
+    student_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("students.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = _created_at()
+
+
 # Tables that carry tenant-owned data and therefore receive RLS in the migration.
 TENANT_OWNED_TABLES: tuple[str, ...] = (
     "users",
@@ -461,4 +581,9 @@ TENANT_OWNED_TABLES: tuple[str, ...] = (
     "actions",
     # Phase 4 additions
     "advisors",
+    # Phase 5 additions
+    "usage_event",
+    "widget_config",
+    # Phase 5 addendum
+    "portal_user",
 )

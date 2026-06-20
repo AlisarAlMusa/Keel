@@ -1,0 +1,17 @@
+{
+  "name": "@keel/ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "peerDependencies": {
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "scripts": {
+    "build": "echo '@keel/ui is source-only (no build step needed)'"
+  }
+}

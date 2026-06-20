@@ -14,7 +14,13 @@ htmlcov
 
 # Other build contexts / unrelated code
 model-server
-frontend
+
+# Phase 5 frontend — allow ui/, widget/, admin/, static/ into the api build
+# context so Dockerfile.api node-builder stage can compile them.
+# Exclude portal/ (has its own container), node_modules, and pre-built dist/.
+frontend/portal
+frontend/**/node_modules
+frontend/**/dist
 node_modules
 
 # Docs & specs (not needed at runtime)

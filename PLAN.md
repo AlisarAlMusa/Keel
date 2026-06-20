@@ -96,10 +96,15 @@ The ordered build plan with acceptance criteria. Check items off as they land. `
 
 ## Phase 5 — Frontends, Auth, Background Intelligence (Day 6)
 
-- [ ] 🔴 Student widget (React): chat, plan view, risk/workload badges, save/compare/activate, approval
-- [ ] 🔴 Signed per-widget token exchange + server-side origin check; CORS/CSP
-- [ ] `widget.js` loader (one `<script>` tag → iframe)
-- [ ] Admin console: catalog upload (DB + RAG), rules config, request-queue inbox, widget config, cost view
+- [x] 🔴 Student widget (React): chat, plan view, risk/workload badges, save/compare/activate, approval
+- [x] 🔴 Signed per-widget token exchange + server-side origin check; CORS/CSP
+- [x] `widget.js` loader (one `<script>` tag → iframe, postMessage token, lazy mint)
+- [x] Admin console: RAG upload, widget config, snippet, cost view, audit log
+- [x] Mock SIS portal: standalone Node/Express microservice; student schedule (via-Keel badge), requests, activity; registrar request queue + decision; read-only catalog/sections/students/rules
+- [x] Portal ↔ Keel service-to-service auth (`portal_service_secret`, `/internal/mint-token`)
+- [x] npm workspace monorepo (`frontend/`): shared `@keel/ui` design system (tokens + primitives)
+- [x] ⚙ Widget auth CI gates: stale-token 401, disallowed-origin 403, cross-tenant isolation, PII-free payload (17/17 green)
+- [x] `DECISIONS.md` Phase 5 entries: D-P5-001 through D-P5-006
 - [ ] Automatic replanning (A6): worker → affected plans → re-audit/re-plan → notify
 - [ ] Personalized alerts (G1): 4 triggers → notification table → outbox
 - [ ] Eval reports (RAGAS, eval_report.json) → MinIO

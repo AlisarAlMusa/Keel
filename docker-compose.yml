@@ -24,9 +24,12 @@ x-app-env: &app-env
   VAULT_TOKEN: ${VAULT_TOKEN}
   VAULT_KV_MOUNT: ${VAULT_KV_MOUNT}
   VAULT_SECRET_PATH: ${VAULT_SECRET_PATH}
-  # LLM model names (non-secret; keys come from Vault)
-  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
-  GEMINI_LITE_MODEL: ${GEMINI_LITE_MODEL:-gemini-2.0-flash-lite}
+  # LLM model names (non-secret; hardcoded — not overridable via .env to avoid confusion)
+  # gemini-3.1-flash-lite = 500 RPD free tier (primary)
+  # gemini-2.5-flash = 20 RPD free tier — DO NOT USE as primary
+  GEMINI_MODEL: gemini-3.1-flash-lite
+  GEMINI_FALLBACK_MODELS: '["gemini-3-flash","gemini-2.5-flash-lite"]'
+  GEMINI_LITE_MODEL: gemini-3.1-flash-lite
   # RAG knobs
   EMBED_MODEL: ${EMBED_MODEL:-embed-multilingual-v3.0}
   EMBED_DIM: ${EMBED_DIM:-1024}
@@ -36,6 +39,10 @@ x-app-env: &app-env
   RRF_K: ${RRF_K:-60}
   RERANK_TOP_N: ${RERANK_TOP_N:-5}
   SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-1800}
+  # Phase 5 addendum: demo passwords (Vault is the authoritative source at runtime)
+  KEEL_OPERATOR_PASSWORD: ${KEEL_OPERATOR_PASSWORD:-keel-operator-demo}
+  KEEL_ADMIN_PASSWORD: ${KEEL_ADMIN_PASSWORD:-keel-admin-demo}
+  KEEL_PORTAL_PASSWORD: ${KEEL_PORTAL_PASSWORD:-keel-portal-demo}
 
 services:
   db:
@@ -116,8 +123,14 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       KEEL_JWT_SIGNING_KEY: ${KEEL_JWT_SIGNING_KEY}
       KEEL_WIDGET_TOKEN_SECRET: ${KEEL_WIDGET_TOKEN_SECRET}
+      # Phase 5: shared secret for portal→keel service-to-service auth (D-P5-005)
+      KEEL_PORTAL_SERVICE_SECRET: ${KEEL_PORTAL_SERVICE_SECRET}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       COHERE_API_KEY: ${COHERE_API_KEY}
+      # Phase 5 addendum: operator / admin / portal demo passwords
+      KEEL_OPERATOR_PASSWORD: ${KEEL_OPERATOR_PASSWORD:-keel-operator-demo}
+      KEEL_ADMIN_PASSWORD: ${KEEL_ADMIN_PASSWORD:-keel-admin-demo}
+      KEEL_PORTAL_PASSWORD: ${KEEL_PORTAL_PASSWORD:-keel-portal-demo}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -127,8 +140,12 @@ services:
           minio_secret_key=$MINIO_ROOT_PASSWORD \
           jwt_signing_key=$KEEL_JWT_SIGNING_KEY \
           widget_token_secret=$KEEL_WIDGET_TOKEN_SECRET \
+          portal_service_secret=$KEEL_PORTAL_SERVICE_SECRET \
           gemini_api_key=$GEMINI_API_KEY \
-          cohere_api_key=$COHERE_API_KEY
+          cohere_api_key=$COHERE_API_KEY \
+          keel_operator_password=$KEEL_OPERATOR_PASSWORD \
+          keel_admin_password=$KEEL_ADMIN_PASSWORD \
+          keel_portal_password=$KEEL_PORTAL_PASSWORD
     networks: [keel]
 
   # One-shot: create the MinIO buckets MLflow + the app need, then exit.
@@ -256,6 +273,72 @@ services:
     depends_on:
       model-artifacts-sync:
         condition: service_completed_successfully
+    networks: [keel]
+
+  # Mock SIS portals — one image, two instances (spec §S9, D-P5-001, D-P5-002).
+  # Same Dockerfile, different env (PORTAL_TENANT, PORT, branding, widget snippet).
+  # Two origins make the Keel origin-check + cross-tenant story demonstrable.
+
+  # ── Northane portal (:3001) ───────────────────────────────────────────────
+  portal-northane:
+    build:
+      context: ./frontend
+      dockerfile: portal/Dockerfile
+      args:
+        VITE_UNIVERSITY_NAME: "Northane University"
+        VITE_UNIVERSITY_INITIAL: "N"
+        VITE_KEEL_API_URL: "http://localhost:8000"
+    environment:
+      PORT: "3001"
+      PORTAL_TENANT: "northane"
+      DATABASE_URL: "postgresql://keel_app:${KEEL_APP_PASSWORD}@db:5432/keel"
+      KEEL_API_URL: "http://api:8000"
+      PORTAL_SERVICE_SECRET: ${KEEL_PORTAL_SERVICE_SECRET}
+      SESSION_SECRET: ${KEEL_JWT_SIGNING_KEY}
+      NODE_ENV: production
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [keel]
+
+  # ── Summit portal (:3002) ─────────────────────────────────────────────────
+  portal-summit:
+    build:
+      context: ./frontend
+      dockerfile: portal/Dockerfile
+      args:
+        VITE_UNIVERSITY_NAME: "Summit College"
+        VITE_UNIVERSITY_INITIAL: "S"
+        VITE_KEEL_API_URL: "http://localhost:8000"
+    environment:
+      PORT: "3002"
+      PORTAL_TENANT: "summit"
+      DATABASE_URL: "postgresql://keel_app:${KEEL_APP_PASSWORD}@db:5432/keel"
+      KEEL_API_URL: "http://api:8000"
+      PORTAL_SERVICE_SECRET: ${KEEL_PORTAL_SERVICE_SECRET}
+      SESSION_SECRET: ${KEEL_JWT_SIGNING_KEY}
+      NODE_ENV: production
+    ports:
+      - "3002:3002"
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks: [keel]
 
 volumes:

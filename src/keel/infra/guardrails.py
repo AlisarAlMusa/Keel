@@ -87,17 +87,27 @@ class GuardrailDecision:
     reason: str | None = None  # populated only when safe=False
 
 
-def check_input(message: str, *, tenant_id: str) -> GuardrailDecision:
+def check_input(
+    message: str,
+    *,
+    tenant_id: str,
+    other_tenant_names: list[tuple[str, str]] | None = None,
+) -> GuardrailDecision:
     """Run input rails on an inbound message.
 
     Args:
-        message:   The raw student message (pre-any LLM call).
-        tenant_id: The authenticated tenant this message belongs to.
+        message:            The raw student message (pre-any LLM call).
+        tenant_id:          The authenticated tenant this message belongs to.
+        other_tenant_names: List of (slug, name) tuples for every OTHER tenant.
+                            When provided, any mention of another institution's
+                            slug or name triggers a cross-tenant refusal.
 
     Returns:
         GuardrailDecision(safe=True) if the message passes both rails.
         GuardrailDecision(safe=False, reason=...) if it fails either rail.
     """
+    msg_lower = message.lower()
+
     # --- Injection rail ---
     for pattern in _INJECTION_PATTERNS:
         if pattern.search(message):
@@ -109,11 +119,10 @@ def check_input(message: str, *, tenant_id: str) -> GuardrailDecision:
             )
             return GuardrailDecision(safe=False, reason="injection_attempt")
 
-    # --- Cross-tenant probe rail ---
+    # --- Cross-tenant probe rail (UUID-based) ---
     uuids_in_message = _UUID_RE.findall(message)
     for uid in uuids_in_message:
         if uid.lower() != tenant_id.lower():
-            # A different UUID appears in the message — check for access-intent phrases.
             for phrase_pat in _CROSS_TENANT_PHRASES:
                 if phrase_pat.search(message):
                     _log.warning(
@@ -123,6 +132,27 @@ def check_input(message: str, *, tenant_id: str) -> GuardrailDecision:
                         message_snippet=message[:80],
                     )
                     return GuardrailDecision(safe=False, reason="cross_tenant_probe")
+
+    # --- Cross-tenant probe rail (name/slug-based) ---
+    if other_tenant_names:
+        for slug, name in other_tenant_names:
+            # Check slug (e.g. "summit") and display name (e.g. "Summit College")
+            # Use word-boundary awareness: "summit" should not match "summiting"
+            slug_hit = bool(
+                slug
+                and len(slug) > 2
+                and re.search(r"\b" + re.escape(slug.lower()) + r"\b", msg_lower)
+            )
+            name_hit = bool(name and len(name) > 2 and name.lower() in msg_lower)
+            if slug_hit or name_hit:
+                matched = slug if slug_hit else name
+                _log.warning(
+                    "guardrail.cross_tenant_name_refused",
+                    matched=matched,
+                    tenant_id=tenant_id,
+                    message_snippet=message[:80],
+                )
+                return GuardrailDecision(safe=False, reason="cross_tenant_probe")
 
     return GuardrailDecision(safe=True)
 

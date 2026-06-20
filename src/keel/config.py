@@ -66,13 +66,14 @@ class Settings(BaseSettings):
     vault_secret_path: str = "keel/app"
 
     # --- LLM models (names are not secret; keys come from Vault) ---
-    # Fallback chain: strongest → high-quota → reserve.
-    #   gemini-2.5-flash      → 20 RPD  (best quality)
-    #   gemini-3.1-flash-lite → 500 RPD (hard to exhaust — main safety net)
-    #   gemini-3-flash        → 20 RPD  (last resort)
-    gemini_model: str = "gemini-2.5-flash"
-    gemini_fallback_models: list[str] = ["gemini-3.1-flash-lite", "gemini-3-flash"]
-    gemini_lite_model: str = "gemini-2.5-flash-lite"
+    # Fallback chain verified against actual API quota screen:
+    #   gemini-3.1-flash-lite → 500 RPD (primary — highest quota available)
+    #   gemini-3-flash        → 20 RPD  (fallback — fresh at demo time)
+    #   gemini-2.5-flash-lite → 20 RPD  (last resort)
+    # gemini-2.5-flash has 20 RPD and was already exhausted (36 used).
+    gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_fallback_models: list[str] = ["gemini-3-flash", "gemini-2.5-flash-lite"]
+    gemini_lite_model: str = "gemini-3.1-flash-lite"
 
     # --- RAG / embedding knobs (all tuneable without code change) ---
     embed_model: str = "embed-multilingual-v3.0"
@@ -85,6 +86,19 @@ class Settings(BaseSettings):
 
     # --- Session / cache ---
     session_ttl_seconds: int = 1800  # 30-min sliding TTL for Redis chat memory
+
+    # --- Platform operator (Phase 5 addendum) ---
+    # Demo password for the platform operator account (Vault-overridable).
+    keel_operator_password: str = "keel-operator-demo"
+    # Demo password for tenant_admin accounts (Vault-overridable).
+    keel_admin_password: str = "keel-admin-demo"
+    # Demo password for portal users (students + registrar; Vault-overridable).
+    keel_portal_password: str = "keel-portal-demo"
+
+    # --- Portal tenant binding ---
+    # Set per portal service instance to bind login + SIS reads to one tenant.
+    # In compose: PORTAL_TENANT=<slug> for each portal-northane / portal-summit.
+    portal_tenant: str = "northane"
 
     @property
     def service_name(self) -> str:

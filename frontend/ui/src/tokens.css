@@ -1,0 +1,122 @@
+/**
+ * Keel design tokens (frontend.md §2).
+ *
+ * Two skins use the same variable names but different values:
+ *   .keel-dark  — widget iframe (Keel product, dark navy)
+ *   .keel-light — admin console (Keel product, light work surface)
+ *   .sis-light  — portal (institutional skin, plain / flat)
+ *
+ * Base palette (exact hex per frontend.md §2.1):
+ */
+
+:root {
+  /* ── Base palette ──────────────────────────────── */
+  --moonlight:      #F0ECDD;   /* light text on dark; light page bg */
+  --frost:          #8BA3C5;   /* muted accent, borders, secondary text on dark */
+  --steel:          #495B7D;   /* mid-tone; secondary buttons; secondary text on light */
+  --storm:          #23354D;   /* card/panel surface on dark; headers on light */
+  --oxford:         #000435;   /* deep navy — widget bg; primary text on light */
+  --mahogany:       #4B2E0A;   /* dark warm brown from the Keel cap mark — accent & highlight */
+
+  /* ── Status / badge extensions (frontend.md §2.2) ─ */
+  --accent:         #5BC2E7;   /* focus rings, active tab, links, streaming dot */
+  --risk-ontrack:   #3E8E7E;   /* on-track badge (muted teal-green) */
+  --risk-atrisk:    #D9A441;   /* at-risk badge (calm amber, not alarmist red) */
+  --load-light:     #8BA3C5;   /* = --frost */
+  --load-medium:    #495B7D;   /* = --steel */
+  --load-heavy:     #D9A441;   /* = --risk-atrisk */
+  --status-pending: #8BA3C5;
+  --status-approved:#3E8E7E;
+  --status-rejected:#C0392B;
+
+  /* ── Spacing (4-px base grid) ──────────────────── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-12: 48px;
+
+  /* ── Radius ────────────────────────────────────── */
+  --radius-sm:  6px;    /* portal (squarer — more "records system") */
+  --radius-md:  8px;    /* buttons, inputs */
+  --radius-lg:  12px;   /* cards, panels, widget */
+
+  /* ── Type scale ────────────────────────────────── */
+  --text-xs:   0.75rem;
+  --text-sm:   0.875rem;
+  --text-base: 1rem;
+  --text-lg:   1.25rem;
+  --text-xl:   1.5rem;
+  --text-2xl:  2rem;
+  --line-height: 1.5;
+
+  /* ── Transitions ───────────────────────────────── */
+  --transition-fast: 0.15s ease;
+}
+
+/* ── Dark widget skin ──────────────────────────────── */
+.keel-dark {
+  --bg:         var(--oxford);
+  --surface:    var(--storm);
+  --border:     var(--steel);
+  --text:       var(--moonlight);
+  --text-muted: var(--frost);
+  --btn-primary-bg:   var(--moonlight);
+  --btn-primary-text: var(--oxford);
+  --btn-secondary-bg: transparent;
+  --btn-secondary-border: var(--steel);
+  --btn-secondary-text: var(--frost);
+  --input-bg:   var(--storm);
+  --input-text: var(--moonlight);
+  --input-border: var(--steel);
+  --shadow: 0 8px 32px rgba(0, 4, 53, 0.45);
+}
+
+/* ── Light admin skin ──────────────────────────────── */
+.keel-light {
+  --bg:         var(--moonlight);
+  --surface:    #ffffff;
+  --border:     #d0dae8;
+  --text:       var(--oxford);
+  --text-muted: var(--steel);
+  --btn-primary-bg:   var(--mahogany);
+  --btn-primary-text: var(--moonlight);
+  --btn-secondary-bg: transparent;
+  --btn-secondary-border: var(--steel);
+  --btn-secondary-text: var(--steel);
+  --input-bg:   #ffffff;
+  --input-text: var(--oxford);
+  --input-border: #c4d0df;
+  --shadow: 0 2px 8px rgba(35, 53, 77, 0.12);
+}
+
+/* ── Institutional SIS skin ────────────────────────── */
+.sis-light {
+  --bg:         #f5f7fa;
+  --surface:    #ffffff;
+  --border:     #d8dde6;
+  --text:       #1a2436;
+  --text-muted: #5a6880;
+  --btn-primary-bg:   #2c4a7c;
+  --btn-primary-text: #ffffff;
+  --btn-secondary-bg: transparent;
+  --btn-secondary-border: #8090a8;
+  --btn-secondary-text: #3d5578;
+  --input-bg:   #ffffff;
+  --input-text: #1a2436;
+  --input-border: #bbc5d4;
+  --shadow: none;
+
+  /* Portal uses squarer corners */
+  --radius-lg:  6px;
+  --radius-md:  4px;
+}
+
+/* ── Global resets ─────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; }
+}

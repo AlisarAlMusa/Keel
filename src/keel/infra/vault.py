@@ -21,6 +21,9 @@ REQUIRED_SECRET_KEYS: tuple[str, ...] = (
     "minio_secret_key",
     "jwt_signing_key",
     "widget_token_secret",
+    # Phase 5: service-to-service secret used by the portal Express backend
+    # when calling POST /internal/mint-token (D-P5-005).
+    "portal_service_secret",
 )
 
 
