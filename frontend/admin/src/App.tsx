@@ -202,9 +202,9 @@ function AppShell({
   return (
     <div className="keel-light" style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
       {/* Sidebar */}
-      <nav style={{ width: 220, flexShrink: 0, background: 'var(--storm)', display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0 }}>
-        {/* Logo banner — dark bg matches dark-navy-logo.png background */}
-        <div style={{ background: '#000719', padding: '12px 16px 8px', borderBottom: '1px solid rgba(240,236,221,0.08)' }}>
+      <nav style={{ width: 220, flexShrink: 0, background: '#000719', display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0 }}>
+        {/* Logo banner — transparent: sidebar is now #000719, matching the logo PNG background */}
+        <div style={{ padding: '12px 16px 8px', borderBottom: '1px solid rgba(240,236,221,0.08)' }}>
           <img
             src="/static/dark-navy-logo.png"
             alt="Keel"

@@ -364,10 +364,14 @@ app.get('/api/portal/activity', requireAuth, async (req, res) => {
   try {
     const result = await withTenantTx(client, tenant_id, (c) =>
       c.query(
-        `SELECT id, actor, action, before, after, created_at
-         FROM audit_log
-         WHERE tenant_id = $1
-         ORDER BY created_at DESC LIMIT 20`,
+        `SELECT al.id, al.actor, al.action, al.before, al.after, al.created_at,
+                pu.email AS actor_email,
+                initcap(split_part(pu.email, '@', 1)) AS actor_name
+         FROM audit_log al
+         LEFT JOIN portal_user pu ON pu.student_id::text = al.actor
+                   AND pu.tenant_id = al.tenant_id AND pu.role = 'student'
+         WHERE al.tenant_id = $1
+         ORDER BY al.created_at DESC LIMIT 20`,
         [tenant_id]
       )
     );
@@ -392,10 +396,11 @@ app.get('/api/portal/registrar/requests', requireRegistrar, async (req, res) => 
       c.query(
         `SELECT rq.id, rq.student_id, rq.type, rq.status, rq.payload,
                 rq.created_at, rq.resolved_at, rq.target,
-                u.display_name AS student_name, u.email AS student_email
+                pu.email AS student_email,
+                initcap(split_part(pu.email, '@', 1)) AS student_name
          FROM request_queue rq
-         JOIN students s ON s.id = rq.student_id AND s.tenant_id = rq.tenant_id
-         JOIN users u ON u.id = s.user_id
+         LEFT JOIN portal_user pu ON pu.student_id = rq.student_id
+                   AND pu.tenant_id = rq.tenant_id AND pu.role = 'student'
          WHERE rq.tenant_id = $1 AND rq.status = $2
          ORDER BY rq.created_at ASC`,
         [tenant_id, status]

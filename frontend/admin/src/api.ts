@@ -143,6 +143,7 @@ export async function getCost(period: CostPeriod): Promise<CostResponse> {
 // ── Admin: Audit Log ──────────────────────────────────────────────────────────
 
 export interface AuditEntry {
+  actor_name: string | null;
   id: number;
   actor: string;
   action: string;

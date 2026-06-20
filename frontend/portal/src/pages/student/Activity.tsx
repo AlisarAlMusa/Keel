@@ -74,7 +74,9 @@ export function Activity() {
                     marginBottom: '2px',
                   }}
                 >
-                  <span style={{ color: '#2c4a7c' }}>{item.actor}</span>
+                  <span style={{ color: '#2c4a7c' }} title={item.actor}>
+                    {item.actor_name ?? item.actor_email ?? item.actor.slice(0, 8) + '…'}
+                  </span>
                   {' '}
                   <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
                     {item.action.replace(/_/g, ' ').replace(/\./g, ' → ')}

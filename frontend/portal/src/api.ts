@@ -104,6 +104,8 @@ export async function getRequests(): Promise<RequestsResponse> {
 export interface ActivityItem {
   id: string;
   actor: string;
+  actor_name?: string;
+  actor_email?: string;
   action: string;
   before: Record<string, unknown> | null;
   after: Record<string, unknown> | null;

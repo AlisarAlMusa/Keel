@@ -345,6 +345,7 @@ async def get_cost(
 class AuditRow(BaseModel):
     id: int
     actor: str
+    actor_name: str | None = None
     action: str
     before: dict[str, Any] | None
     after: dict[str, Any] | None
@@ -382,16 +383,32 @@ async def get_audit(
                 AuditLog.tenant_id == UUID(tenant_id)
             )
         )
+        audit_list = list(rows.scalars())
+
+        # Resolve actor UUIDs → portal email (first part as display name)
+        actor_ids = {r.actor for r in audit_list if r.actor and len(r.actor) == 36}
+        actor_names: dict[str, str] = {}
+        if actor_ids:
+            name_rows = await session.execute(
+                text(
+                    "SELECT student_id::text, email FROM portal_user "
+                    "WHERE tenant_id = :tid AND student_id::text = ANY(:ids) AND role = 'student'"
+                ),
+                {"tid": tenant_id, "ids": list(actor_ids)},
+            )
+            for sid, email in name_rows:
+                actor_names[sid] = email.split("@")[0].capitalize()
 
     audit_rows = [
         AuditRow(
             id=r.id,
             actor=r.actor,
+            actor_name=actor_names.get(r.actor),
             action=r.action,
             before=r.before,
             after=r.after,
             created_at=r.created_at.isoformat(),
         )
-        for r in rows.scalars()
+        for r in audit_list
     ]
     return AuditResponse(rows=audit_rows, total=int(total_row.scalar() or 0))
