@@ -406,7 +406,10 @@ async def get_audit(
             id=r.id,
             action=r.action,
             target_tenant_id=str(r.target_tenant_id) if r.target_tenant_id else None,
-            target_tenant_name=tenant_name_map.get(str(r.target_tenant_id)) if r.target_tenant_id else None,
+            target_tenant_name=(
+                tenant_name_map.get(str(r.target_tenant_id))
+                if r.target_tenant_id else None
+            ),
             detail=r.detail,
             created_at=r.created_at.isoformat(),
         )

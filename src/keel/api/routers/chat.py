@@ -25,6 +25,8 @@ import cohere
 from fastapi import APIRouter, Depends, Request, status
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from keel.api.auth import WidgetContext, get_widget_context, verify_origin_or_403
 from keel.api.deps import get_session
@@ -203,7 +205,7 @@ async def chat(
     try:
         from keel.config import get_settings as _get_settings
         from keel.infra.database.session import tenant_session as _ts
-        _sf = _get_session_factory(request)
+        _sf: async_sessionmaker[AsyncSession] = request.app.state.session_factory
         _model = _get_settings().gemini_model
         _tokens = (len(body.message) + len(safe_text)) // 4
         _cost = round(_tokens * 0.000_000_18, 8)

@@ -97,7 +97,10 @@ def _system_prompt(context: ContextEnvelope, snapshot: dict[str, Any] | None) ->
     )
     # Prepend the tenant-configured persona instruction (from widget_config.persona).
     # This overrides the generic opening so each institution can brand the advisor.
-    persona = getattr(context, "persona_prompt", None) or "You are Keel, a helpful AI academic advisor."
+    persona = (
+        getattr(context, "persona_prompt", None)
+        or "You are Keel, a helpful AI academic advisor."
+    )
     return f"{persona}\n\n{base}"
 
 

@@ -73,12 +73,15 @@ class DocumentUploadResponse(BaseModel):
 async def upload_rag_document(
     file: UploadFile,
     request: Request,
-    ctx: AdminContext = Depends(require_role("tenant_admin")),
+    ctx: AdminContext = _require_admin,
 ) -> DocumentUploadResponse:
     """Upload a prose markdown doc → chunk → embed into pgvector."""
     tenant_id = ctx.tenant_id
     if not tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="tenant_id missing from token",
+        )
 
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="filename required")
@@ -125,7 +128,7 @@ async def upload_document_legacy(
     tenant_id: str,
     file: UploadFile,
     request: Request,
-    ctx: AdminContext = Depends(require_role("tenant_admin")),
+    ctx: AdminContext = _require_admin,
 ) -> DocumentUploadResponse:
     return await upload_rag_document(file=file, request=request, ctx=ctx)
 
@@ -154,11 +157,14 @@ class WidgetConfigResponse(BaseModel):
 @router.get("/widget-config", response_model=WidgetConfigResponse)
 async def get_widget_config(
     request: Request,
-    ctx: AdminContext = Depends(require_role("tenant_admin")),
+    ctx: AdminContext = _require_admin,
 ) -> WidgetConfigResponse:
     tenant_id = ctx.tenant_id
     if not tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="tenant_id missing from token",
+        )
     sf = _get_session_factory(request)
 
     async with sf() as session:
@@ -192,12 +198,15 @@ async def get_widget_config(
 async def put_widget_config(
     body: WidgetConfigPayload,
     request: Request,
-    ctx: AdminContext = Depends(require_role("tenant_admin")),
+    ctx: AdminContext = _require_admin,
 ) -> WidgetConfigResponse:
     """Upsert per-tenant widget configuration. Safety rails are locked in code."""
     tenant_id = ctx.tenant_id
     if not tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="tenant_id missing from token",
+        )
     sf = _get_session_factory(request)
 
     async with sf() as session:
@@ -256,11 +265,14 @@ class WidgetSnippetResponse(BaseModel):
 @router.get("/widget-snippet", response_model=WidgetSnippetResponse)
 async def get_widget_snippet(
     request: Request,
-    ctx: AdminContext = Depends(require_role("tenant_admin")),
+    ctx: AdminContext = _require_admin,
 ) -> WidgetSnippetResponse:
     tenant_id = ctx.tenant_id
     if not tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="tenant_id missing from token",
+        )
     base_url = str(request.base_url).rstrip("/")
     snippet = (
         f'<script src="{base_url}/widget.js" '
@@ -293,11 +305,14 @@ class CostResponse(BaseModel):
 async def get_cost(
     request: Request,
     period: str = "week",
-    ctx: AdminContext = Depends(require_role("tenant_admin")),
+    ctx: AdminContext = _require_admin,
 ) -> CostResponse:
     tenant_id = ctx.tenant_id
     if not tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="tenant_id missing from token",
+        )
     sf = _get_session_factory(request)
 
     interval_map = {"day": "1 day", "week": "7 days", "month": "30 days"}
@@ -361,11 +376,14 @@ class AuditResponse(BaseModel):
 async def get_audit(
     request: Request,
     limit: int = 50,
-    ctx: AdminContext = Depends(require_role("tenant_admin")),
+    ctx: AdminContext = _require_admin,
 ) -> AuditResponse:
     tenant_id = ctx.tenant_id
     if not tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="tenant_id missing from token",
+        )
     sf = _get_session_factory(request)
 
     async with sf() as session:

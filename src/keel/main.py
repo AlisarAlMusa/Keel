@@ -51,7 +51,6 @@ from keel.infra import redis as redis_infra
 from keel.infra import storage as storage_infra
 from keel.infra import tracing
 from keel.infra.database import engine as db_infra
-from keel.infra.database.models import WidgetConfig
 from keel.infra.llm import get_llm
 from keel.infra.model_client import ModelClient
 from keel.infra.vault import VaultConfig, load_secrets
@@ -82,7 +81,10 @@ async def _load_widget_config(
         async with sf() as session:
             # widget_config_all: persona_name + allowed_origins per tenant
             cfg_rows = await session.execute(
-                text("SELECT tenant_id, persona_name, persona, allowed_origins FROM widget_config_all()")
+                text(
+                    "SELECT tenant_id, persona_name, persona, allowed_origins"
+                    " FROM widget_config_all()"
+                )
             )
             origins_map: dict[str, list[str]] = {}
             persona_map: dict[str, str] = {}

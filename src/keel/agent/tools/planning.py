@@ -325,7 +325,10 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
             min_min = (min_start_hour or 0) * 60  # convert hour → minutes-since-midnight
 
             if scored and (ex_days or min_min > 0):
-                first_codes = scored[0]["plan"].terms[0].course_codes if scored[0]["plan"].terms else []
+                first_codes = (
+                    scored[0]["plan"].terms[0].course_codes
+                    if scored[0]["plan"].terms else []
+                )
                 section_notes: list[str] = []
                 if first_codes:
                     try:
@@ -372,7 +375,8 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
 
                             if ok:
                                 section_notes.append(
-                                    f"  {code}: {len(ok)} section(s) meeting your schedule — e.g. {_fmt(ok[0])}"
+                                    f"  {code}: {len(ok)} section(s) meeting"
+                                    f" your schedule — e.g. {_fmt(ok[0])}"
                                 )
                             elif bad:
                                 section_notes.append(

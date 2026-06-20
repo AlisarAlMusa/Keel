@@ -37,13 +37,15 @@ def upgrade() -> None:
         CREATE POLICY tenant_isolation ON users
           USING (
             CASE
-              WHEN COALESCE(current_setting('app.tenant_id', true), '') = '' THEN (tenant_id IS NULL)
+              WHEN COALESCE(current_setting('app.tenant_id', true), '') = ''
+                THEN (tenant_id IS NULL)
               ELSE tenant_id = current_setting('app.tenant_id', true)::uuid
             END
           )
           WITH CHECK (
             CASE
-              WHEN COALESCE(current_setting('app.tenant_id', true), '') = '' THEN (tenant_id IS NULL)
+              WHEN COALESCE(current_setting('app.tenant_id', true), '') = ''
+                THEN (tenant_id IS NULL)
               ELSE tenant_id = current_setting('app.tenant_id', true)::uuid
             END
           )

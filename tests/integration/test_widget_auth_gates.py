@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import jwt
 import pytest
@@ -46,7 +46,7 @@ _STUDENT_B = str(uuid.uuid4())
 
 def _make_app(widget_origins_map: dict | None = None) -> FastAPI:
     """Minimal FastAPI app with widget auth deps wired."""
-    from fastapi import Depends, Request
+    from fastapi import Depends
 
     app = FastAPI()
     app.state.widget_token_secret = _SECRET
@@ -135,8 +135,6 @@ def test_valid_token_returns_200_with_correct_claims() -> None:
 
 def test_disallowed_origin_returns_403() -> None:
     """When a tenant has configured origins, a foreign origin is rejected."""
-    from fastapi import Request
-
     class _MockRequest:
         headers = {"origin": "https://attacker.example.com"}
 
@@ -161,8 +159,6 @@ def test_disallowed_origin_returns_403() -> None:
 
 
 def test_allowed_origin_passes() -> None:
-    from fastapi import HTTPException
-
     origins_map = {_TENANT_A: ["https://allowed.uni.edu"]}
 
     class FakeRequest:
