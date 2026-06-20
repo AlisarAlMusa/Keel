@@ -374,16 +374,17 @@ app.get('/api/portal/activity', requireAuth, async (req, res) => {
     );
     const rows = result.rows;
 
-    // Step 2: resolve actor UUIDs → names using a postgres superuser-level query
-    // (avoids RLS complexity on portal_user during JOIN)
+    // Step 2: resolve actor UUIDs → names (run inside tenant tx so RLS is satisfied)
     const actorIds = [...new Set(rows.map((r) => r.actor).filter((a) => a && a.length === 36))];
     const nameMap = {};
     if (actorIds.length) {
-      const nameResult = await client.query(
-        `SELECT student_id::text AS id, email
-         FROM portal_user
-         WHERE tenant_id = $1 AND role = 'student' AND student_id::text = ANY($2)`,
-        [tenant_id, actorIds]
+      const nameResult = await withTenantTx(client, tenant_id, (c) =>
+        c.query(
+          `SELECT student_id::text AS id, email
+           FROM portal_user
+           WHERE tenant_id = $1 AND role = 'student' AND student_id::text = ANY($2)`,
+          [tenant_id, actorIds]
+        )
       );
       for (const row of nameResult.rows) {
         nameMap[row.id] = row.email;
