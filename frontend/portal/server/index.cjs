@@ -362,14 +362,15 @@ app.get('/api/portal/activity', requireAuth, async (req, res) => {
   const { tenant_id } = req.session;
   const client = await pool.connect();
   try {
-    // Step 1: get activity rows (RLS-scoped to this tenant)
+    const { student_id } = req.session;
+    // Step 1: get activity rows scoped to THIS student only (not all students in tenant)
     const result = await withTenantTx(client, tenant_id, (c) =>
       c.query(
         `SELECT id, actor, action, before, after, created_at
          FROM audit_log
-         WHERE tenant_id = $1
+         WHERE tenant_id = $1 AND actor = $2
          ORDER BY created_at DESC LIMIT 20`,
-        [tenant_id]
+        [tenant_id, student_id]
       )
     );
     const rows = result.rows;
