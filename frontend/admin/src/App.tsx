@@ -61,7 +61,7 @@ function LoginScreen({ onLogin }: { onLogin: (role: string, tenantId: string | n
           <img
             src="/static/final-keel-logo.jpeg"
             alt="Keel"
-            style={{ width: 'calc(100% - 80px)', maxWidth: 340, objectFit: 'contain', display: 'block', margin: '0 auto' }}
+            style={{ width: 'calc(100% - 40px)', maxWidth: 380, objectFit: 'contain', display: 'block', margin: '0 auto' }}
             onError={(e) => {
               (e.target as HTMLImageElement).style.display = 'none';
             }}
@@ -76,7 +76,12 @@ function LoginScreen({ onLogin }: { onLogin: (role: string, tenantId: string | n
           background: '#F0ECDD',
           borderRadius: '16px',
           padding: '40px',
-          boxShadow: '0 32px 96px rgba(0,4,53,0.6), 0 0 0 1px rgba(75,46,10,0.25)',
+          boxShadow: [
+            '0 0 0 1px rgba(100,140,210,0.18)',       /* thin steel-blue ring — acts as border */
+            '0 0 24px rgba(80,120,190,0.22)',          /* soft blue aura — starts the merge */
+            '0 0 56px rgba(35,53,77,0.30)',            /* mid navy bloom */
+            '0 32px 96px rgba(0,4,53,0.55)',          /* deep shadow for depth */
+          ].join(', '),
         }}>
           {error && (
             <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '12px 16px', fontSize: '0.875rem', color: '#c0392b', fontFamily: "'Inter', system-ui, sans-serif", marginBottom: '24px' }}>
@@ -202,11 +207,11 @@ function AppShell({
   return (
     <div className="keel-light" style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
       {/* Sidebar */}
-      <nav style={{ width: 220, flexShrink: 0, background: '#000719', display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0 }}>
+      <nav style={{ width: 220, flexShrink: 0, background: '#010619', display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0 }}>
         {/* Logo banner — transparent: sidebar is now #000719, matching the logo PNG background */}
         <div style={{ padding: '12px 16px 8px', borderBottom: '1px solid rgba(240,236,221,0.08)' }}>
           <img
-            src="/static/dark-navy-logo.png"
+            src="/static/final-keel-logo.jpeg"
             alt="Keel"
             style={{ width: '100%', maxWidth: 210, objectFit: 'contain', display: 'block', margin: '0 auto' }}
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}

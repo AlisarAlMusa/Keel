@@ -66,13 +66,13 @@ class Settings(BaseSettings):
     vault_secret_path: str = "keel/app"
 
     # --- LLM models (names are not secret; keys come from Vault) ---
-    # Fallback chain: strongest → high-quota → reserve.
-    #   gemini-2.5-flash      → 20 RPD  (best quality)
-    #   gemini-3.1-flash-lite → 500 RPD (hard to exhaust — main safety net)
-    #   gemini-3-flash        → 20 RPD  (last resort)
-    gemini_model: str = "gemini-2.5-flash"
-    gemini_fallback_models: list[str] = ["gemini-3.1-flash-lite", "gemini-3-flash"]
-    gemini_lite_model: str = "gemini-2.5-flash-lite"
+    # Fallback chain: high-quota primary → reserve.
+    #   gemini-1.5-flash   → 1500 RPD free tier (primary — plenty for demo)
+    #   gemini-1.5-flash-8b → 4000 RPD free tier (fallback — virtually unlimited)
+    # gemini-2.5-flash has only 20 RPD on free tier — exhausted in minutes of testing.
+    gemini_model: str = "gemini-1.5-flash"
+    gemini_fallback_models: list[str] = ["gemini-1.5-flash-8b", "gemini-1.5-pro"]
+    gemini_lite_model: str = "gemini-1.5-flash-8b"
 
     # --- RAG / embedding knobs (all tuneable without code change) ---
     embed_model: str = "embed-multilingual-v3.0"
@@ -85,6 +85,19 @@ class Settings(BaseSettings):
 
     # --- Session / cache ---
     session_ttl_seconds: int = 1800  # 30-min sliding TTL for Redis chat memory
+
+    # --- Platform operator (Phase 5 addendum) ---
+    # Demo password for the platform operator account (Vault-overridable).
+    keel_operator_password: str = "keel-operator-demo"
+    # Demo password for tenant_admin accounts (Vault-overridable).
+    keel_admin_password: str = "keel-admin-demo"
+    # Demo password for portal users (students + registrar; Vault-overridable).
+    keel_portal_password: str = "keel-portal-demo"
+
+    # --- Portal tenant binding ---
+    # Set per portal service instance to bind login + SIS reads to one tenant.
+    # In compose: PORTAL_TENANT=<slug> for each portal-northane / portal-summit.
+    portal_tenant: str = "northane"
 
     @property
     def service_name(self) -> str:

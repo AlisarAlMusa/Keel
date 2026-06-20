@@ -19,7 +19,7 @@ import * as api from './api';
 const S = {
   shell: { display: 'flex', minHeight: '100vh', background: '#f4f6f9' } as React.CSSProperties,
   sidebar: {
-    width: 220, background: '#000719', color: '#f0ecdd',
+    width: 220, background: '#010619', color: '#f0ecdd',
     display: 'flex', flexDirection: 'column' as const, padding: '0 0 24px',
   } as React.CSSProperties,
   logoArea: { padding: '12px 16px 8px', borderBottom: '1px solid rgba(240,236,221,0.1)' },
@@ -438,7 +438,7 @@ export default function App() {
       <nav style={S.sidebar}>
         <div style={S.logoArea}>
           <img
-            src="/static/dark-navy-logo.png"
+            src="/static/final-keel-logo.jpeg"
             alt="Keel"
             style={{ width: '100%', maxWidth: 210, objectFit: 'contain', display: 'block', margin: '0 auto' }}
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}

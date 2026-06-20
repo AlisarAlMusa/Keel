@@ -199,6 +199,31 @@ async def chat(
         content_hash=content_hash,
     )
 
+    # --- Record usage event (best-effort — never fail the response) ---
+    try:
+        from keel.config import get_settings as _get_settings
+        from keel.infra.database.session import tenant_session as _ts
+        _sf = _get_session_factory(request)
+        _model = _get_settings().gemini_model
+        _tokens = (len(body.message) + len(safe_text)) // 4
+        _cost = round(_tokens * 0.000_000_18, 8)
+        async with _ts(_sf, uuid.UUID(ctx.tenant_id)) as _usess:
+            await _usess.execute(
+                text(
+                    "INSERT INTO usage_event (tenant_id, kind, model, tokens, cost_estimate) "
+                    "VALUES (:tid, :kind, :model, :tokens, :cost)"
+                ),
+                {
+                    "tid": ctx.tenant_id,
+                    "kind": "agent" if router_response.routed_to_agent else "classifier",
+                    "model": _model,
+                    "tokens": _tokens,
+                    "cost": _cost,
+                },
+            )
+    except Exception as _ue:  # noqa: BLE001
+        _log.warning("chat.usage_event_failed", error=str(_ue))
+
     return ChatResponse(
         response=safe_text,
         request_id=request_id,
