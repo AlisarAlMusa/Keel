@@ -362,20 +362,44 @@ app.get('/api/portal/activity', requireAuth, async (req, res) => {
   const { tenant_id } = req.session;
   const client = await pool.connect();
   try {
+    // Step 1: get activity rows (RLS-scoped to this tenant)
     const result = await withTenantTx(client, tenant_id, (c) =>
       c.query(
-        `SELECT al.id, al.actor, al.action, al.before, al.after, al.created_at,
-                pu.email AS actor_email,
-                initcap(split_part(pu.email, '@', 1)) AS actor_name
-         FROM audit_log al
-         LEFT JOIN portal_user pu ON pu.student_id::text = al.actor
-                   AND pu.tenant_id = al.tenant_id AND pu.role = 'student'
-         WHERE al.tenant_id = $1
-         ORDER BY al.created_at DESC LIMIT 20`,
+        `SELECT id, actor, action, before, after, created_at
+         FROM audit_log
+         WHERE tenant_id = $1
+         ORDER BY created_at DESC LIMIT 20`,
         [tenant_id]
       )
     );
-    res.json({ activity: result.rows });
+    const rows = result.rows;
+
+    // Step 2: resolve actor UUIDs → names using a postgres superuser-level query
+    // (avoids RLS complexity on portal_user during JOIN)
+    const actorIds = [...new Set(rows.map((r) => r.actor).filter((a) => a && a.length === 36))];
+    const nameMap = {};
+    if (actorIds.length) {
+      const nameResult = await client.query(
+        `SELECT student_id::text AS id, email
+         FROM portal_user
+         WHERE tenant_id = $1 AND role = 'student' AND student_id::text = ANY($2)`,
+        [tenant_id, actorIds]
+      );
+      for (const row of nameResult.rows) {
+        nameMap[row.id] = row.email;
+      }
+    }
+
+    const activity = rows.map((r) => {
+      const email = nameMap[r.actor];
+      return {
+        ...r,
+        actor_email: email || null,
+        actor_name: email ? email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : null,
+      };
+    });
+
+    res.json({ activity });
   } catch (err) {
     console.error('[activity] error:', err);
     res.status(500).json({ error: 'Database error fetching activity' });

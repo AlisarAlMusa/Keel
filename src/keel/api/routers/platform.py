@@ -107,6 +107,7 @@ class PlatformAuditRow(BaseModel):
     id: int
     action: str
     target_tenant_id: str | None
+    target_tenant_name: str | None = None
     detail: dict[str, Any] | None
     created_at: str
 
@@ -387,14 +388,28 @@ async def get_audit(
     result = await session.execute(
         select(PlatformAudit).order_by(PlatformAudit.created_at.desc()).limit(limit)
     )
+    audit_list = list(result.scalars())
+
+    # Build tenant_id → name map from the unique target_tenant_ids in this batch
+    target_ids = {str(r.target_tenant_id) for r in audit_list if r.target_tenant_id}
+    tenant_name_map: dict[str, str] = {}
+    if target_ids:
+        t_rows = await session.execute(
+            text("SELECT id::text, name FROM tenants WHERE id::text = ANY(:ids)"),
+            {"ids": list(target_ids)},
+        )
+        for tid, tname in t_rows:
+            tenant_name_map[tid] = tname
+
     audit_rows = [
         PlatformAuditRow(
             id=r.id,
             action=r.action,
             target_tenant_id=str(r.target_tenant_id) if r.target_tenant_id else None,
+            target_tenant_name=tenant_name_map.get(str(r.target_tenant_id)) if r.target_tenant_id else None,
             detail=r.detail,
             created_at=r.created_at.isoformat(),
         )
-        for r in result.scalars()
+        for r in audit_list
     ]
     return PlatformAuditResponse(rows=audit_rows)

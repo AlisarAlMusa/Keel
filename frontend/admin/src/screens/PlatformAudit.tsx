@@ -39,7 +39,14 @@ export function PlatformAudit() {
   const tableRows = rows.map(r => [
     <code key="id" style={monoStyle}>{r.id}</code>,
     <span key="action" style={{ color: ACTION_COLOR[r.action] ?? 'var(--text)', fontWeight: 700, fontSize: '0.8rem', textTransform: 'uppercase' as const }}>{r.action}</span>,
-    <code key="tid" style={{ ...monoStyle, color: 'var(--text-muted)' }}>{r.target_tenant_id ? r.target_tenant_id.slice(0, 8) + '…' : '—'}</code>,
+    <div key="tid">
+      <div style={{ fontWeight: 600, fontSize: '0.8rem' }}>{r.target_tenant_name ?? '—'}</div>
+      {r.target_tenant_id && (
+        <code style={{ ...monoStyle, color: 'var(--text-muted)', fontSize: '0.7rem' }}>
+          {r.target_tenant_id.slice(0, 8)}…
+        </code>
+      )}
+    </div>,
     <span key="detail" style={{ ...monoStyle, color: 'var(--text-muted)' }}>{r.detail ? JSON.stringify(r.detail).slice(0, 80) : '—'}</span>,
     <span key="time" style={{ ...monoStyle, whiteSpace: 'nowrap' as const }}>{formatTime(r.created_at)}</span>,
   ]);

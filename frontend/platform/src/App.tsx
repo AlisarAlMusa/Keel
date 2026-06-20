@@ -19,12 +19,12 @@ import * as api from './api';
 const S = {
   shell: { display: 'flex', minHeight: '100vh', background: '#f4f6f9' } as React.CSSProperties,
   sidebar: {
-    width: 220, background: '#000435', color: '#f0ecdd',
-    display: 'flex', flexDirection: 'column' as const, padding: '24px 0',
+    width: 220, background: '#000719', color: '#f0ecdd',
+    display: 'flex', flexDirection: 'column' as const, padding: '0 0 24px',
   } as React.CSSProperties,
-  logoArea: { padding: '0 20px 24px', borderBottom: '1px solid rgba(240,236,221,0.1)' },
+  logoArea: { padding: '12px 16px 8px', borderBottom: '1px solid rgba(240,236,221,0.1)' },
   logoTitle: { fontFamily: 'Georgia, serif', fontSize: '1.1rem', fontWeight: 700, color: '#f0ecdd' },
-  logoSub: { fontSize: '0.7rem', color: 'rgba(240,236,221,0.5)', marginTop: 2 },
+  logoSub: { fontSize: '0.6rem', color: '#4B2E0A', marginTop: 4, textTransform: 'uppercase' as const, letterSpacing: '0.1em', fontWeight: 600 },
   navBtn: (active: boolean): React.CSSProperties => ({
     display: 'block', width: '100%', textAlign: 'left', padding: '9px 20px',
     background: active ? 'rgba(240,236,221,0.12)' : 'transparent',
@@ -437,10 +437,15 @@ export default function App() {
       {/* Sidebar */}
       <nav style={S.sidebar}>
         <div style={S.logoArea}>
-          <div style={S.logoTitle}>Keel</div>
+          <img
+            src="/static/dark-navy-logo.png"
+            alt="Keel"
+            style={{ width: '100%', maxWidth: 210, objectFit: 'contain', display: 'block', margin: '0 auto' }}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+          />
           <div style={S.logoSub}>Platform Console</div>
         </div>
-        <div style={{ marginTop: 16 }}>
+        <div style={{ marginTop: 8 }}>
           {nav.map(n => (
             <button key={n.key} style={S.navBtn(page === n.key)} onClick={() => setPage(n.key)}>
               {n.label}

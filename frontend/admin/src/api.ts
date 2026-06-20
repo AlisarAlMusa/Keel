@@ -223,6 +223,7 @@ export interface PlatformAuditRow {
   id: number;
   action: string;
   target_tenant_id: string | null;
+  target_tenant_name: string | null;
   detail: Record<string, unknown> | null;
   created_at: string;
 }

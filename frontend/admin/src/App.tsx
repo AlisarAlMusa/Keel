@@ -208,7 +208,7 @@ function AppShell({
           <img
             src="/static/dark-navy-logo.png"
             alt="Keel"
-            style={{ width: '100%', maxWidth: 188, objectFit: 'contain', display: 'block', margin: '0 auto' }}
+            style={{ width: '100%', maxWidth: 210, objectFit: 'contain', display: 'block', margin: '0 auto' }}
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
           />
           <div style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: '0.6rem', color: '#4B2E0A', marginTop: '4px', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600, textAlign: 'center' }}>
