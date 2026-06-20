@@ -5,7 +5,7 @@
 #
 # Build context = repo root; uses the shared root .dockerignore.
 
-# ── Stage 1: build frontend UIs (widget + admin) ─────────────────────────────
+# ── Stage 1: build frontend UIs (widget + admin/keel-console) ────────────────
 FROM node:22-alpine AS node-builder
 
 WORKDIR /frontend
@@ -15,18 +15,20 @@ COPY frontend/package.json ./package.json
 COPY frontend/ui/package.json ./ui/package.json
 COPY frontend/widget/package.json ./widget/package.json
 COPY frontend/admin/package.json ./admin/package.json
-# Portal has its own build (separate container); not needed here.
-# We add a stub so npm workspaces doesn't complain about a missing member.
-RUN mkdir -p portal && echo '{"name":"@keel/portal","private":true,"version":"0.0.0"}' > portal/package.json
+# Stubs for workspace members not built here (avoids npm workspaces error)
+RUN mkdir -p portal platform \
+ && echo '{"name":"@keel/portal","private":true,"version":"0.0.0"}' > portal/package.json \
+ && echo '{"name":"@keel/platform","private":true,"version":"0.0.0"}' > platform/package.json
 
 RUN npm install --workspaces --include-workspace-root
 
 # Copy source after install (layer cache for deps)
 COPY frontend/ui/ ./ui/
 COPY frontend/widget/ ./widget/
+# admin = unified Keel console (tenant_admin + platform_operator, role-based routing)
 COPY frontend/admin/ ./admin/
 
-# Build widget → widget/dist/ and admin → admin/dist/
+# Build widget → widget/dist/ and admin → admin/dist/ (served at /keel)
 RUN npm run build --workspace=widget
 RUN npm run build --workspace=admin
 

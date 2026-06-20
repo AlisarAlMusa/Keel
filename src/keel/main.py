@@ -30,7 +30,7 @@ from pathlib import Path
 import cohere as cohere_lib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -250,15 +250,11 @@ def create_app() -> FastAPI:
 
     # widget.js loader (inline; fronts the widget iframe)
     @app.get("/widget.js", include_in_schema=False)
-    async def widget_js() -> FileResponse:
+    async def widget_js() -> Response:
         js_path = _FRONTEND_ROOT / "widget.js"
         if js_path.exists():
             return FileResponse(str(js_path), media_type="application/javascript")
-        # Fallback inline stub so the route always responds
-        from fastapi.responses import Response as _Resp
-
-        stub = _WIDGET_JS_STUB
-        return _Resp(content=stub, media_type="application/javascript")
+        return Response(content=_WIDGET_JS_STUB, media_type="application/javascript")
 
     # Brand assets (keel-icon.png, keel-logo.png) — referenced by widget iframe and admin console
     _mount_static_if_exists(app, "/static", _FRONTEND_ROOT / "static", "brand-static")

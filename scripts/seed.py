@@ -867,7 +867,7 @@ async def _seed_tenant(
     # Students + User accounts + transcripts.
     # Create all User rows first and flush so the FK from Student.user_id is
     # satisfied — SQLAlchemy doesn't know the ordering without a relationship().
-    student_user_pairs: list[tuple[dict, UUID, UUID]] = []
+    student_user_pairs: list[tuple[dict[str, Any], UUID, UUID]] = []
     for s in _STUDENTS[slug]:
         uid = uuid4()
         session.add(

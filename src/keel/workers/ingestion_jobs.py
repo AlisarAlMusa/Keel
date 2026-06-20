@@ -11,6 +11,7 @@ import asyncio
 from uuid import UUID
 
 import cohere
+from sqlalchemy import text
 
 from keel.config import get_settings
 from keel.infra import storage as storage_infra
@@ -57,6 +58,11 @@ def run_ingest_source(
         session_factory = db_infra.create_session_factory(engine)
         try:
             async with session_factory() as session:
+                # RLS requires app.tenant_id to be set before any writes to rag_chunks.
+                await session.execute(
+                    text("SELECT set_config('app.tenant_id', :tid, true)"),
+                    {"tid": tenant_id_str},
+                )
                 result = await ingest_file(
                     tenant_id=UUID(tenant_id_str),
                     source=source,

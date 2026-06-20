@@ -86,7 +86,7 @@ async def _do_erase(tenant_id: UUID) -> dict[str, int]:
                 tenant_row = row.fetchone()
                 if not tenant_row:
                     log.info("erase_tenant.already_gone", tenant_id=str(tenant_id))
-                    return {"note": "tenant_not_found_noop"}  # type: ignore[return-value]
+                    return {}
 
                 tenant_name = tenant_row.name
 
@@ -97,7 +97,7 @@ async def _do_erase(tenant_id: UUID) -> dict[str, int]:
                         text(f"DELETE FROM {table} WHERE tenant_id = :tid"),
                         {"tid": str(tenant_id)},
                     )
-                    n = result.rowcount
+                    n = result.rowcount  # type: ignore[attr-defined]
                     if n:
                         counts[table] = n
 
@@ -106,7 +106,7 @@ async def _do_erase(tenant_id: UUID) -> dict[str, int]:
                     text("DELETE FROM users WHERE tenant_id = :tid"),
                     {"tid": str(tenant_id)},
                 )
-                counts["users"] = result.rowcount
+                counts["users"] = result.rowcount  # type: ignore[attr-defined]
 
                 # Delete the tenant row itself
                 await session.execute(
@@ -154,11 +154,11 @@ async def _do_erase(tenant_id: UUID) -> dict[str, int]:
 
             bucket = settings.minio_bucket
             prefix = str(tenant_id)
-            paginator = s3.get_paginator("list_objects_v2")  # type: ignore[attr-defined]
+            paginator = s3.get_paginator("list_objects_v2")
             deleted_blobs = 0
             for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
                 for obj in page.get("Contents", []):
-                    s3.delete_object(Bucket=bucket, Key=obj["Key"])  # type: ignore[attr-defined]
+                    s3.delete_object(Bucket=bucket, Key=obj["Key"])
                     deleted_blobs += 1
             if deleted_blobs:
                 counts["minio_blobs"] = deleted_blobs

@@ -345,7 +345,7 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                                     "codes": list(first_codes),
                                 },
                             )
-                            sections_by_code: dict[str, list[dict]] = {}
+                            sections_by_code: dict[str, list[list[dict[str, Any]]]] = {}
                             for code, slots in rows:
                                 sections_by_code.setdefault(code, []).append(slots)
 
@@ -363,7 +363,7 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                                 else:
                                     ok.append(slots)
 
-                            def _fmt(slots: list[dict]) -> str:
+                            def _fmt(slots: list[dict[str, Any]]) -> str:
                                 parts = []
                                 for s in sorted(slots, key=lambda x: x["start_min"]):
                                     h, m = divmod(s["start_min"], 60)
