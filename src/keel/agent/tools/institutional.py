@@ -275,20 +275,25 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
             )
             draft = _extract_advise_text(res.content)
 
-            await inst.submit_petition(
+            # File immediately — a petition is a request to a human reviewer, not an enrollment.
+            # The student asking "petition for X" is implicit approval; no stage→interrupt needed.
+            result = await inst.submit_petition(
                 deps.session_factory,
                 tenant_id=UUID(tenant_id),
                 student_id=UUID(student_id),
                 course_id=course_id,
                 justification=justification,
                 draft=draft,
-                approved=False,
+                approved=True,
             )
+            if not result.written:
+                return (
+                    f"Petition for {course_id} could not be filed: {result.message}"
+                )
             return (
-                f"**Petition draft — {course_id}** (engine block: {block_reason})\n\n{draft}\n\n"
-                "⚠ This is a request to a human reviewer, **not** an enrollment — the prerequisite "
-                "block stays in place. Approve it and I'll file it with the registrar; nothing is "
-                "filed until you do."
+                f"✅ **Petition filed with the registrar — {course_id}**\n\n{draft}\n\n"
+                "The registrar will review your request. The prerequisite block remains in place "
+                "until they approve it — you will be notified of the outcome."
             )
         except Exception as exc:
             _log.error("tool.submit_petition.error", error=str(exc))
