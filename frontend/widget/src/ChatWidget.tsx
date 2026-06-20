@@ -458,14 +458,24 @@ function ConfirmModal({
 interface ChatWidgetProps {
   token: string;
   personaName?: string;
+  storageKey?: string;
 }
 
-export function ChatWidget({ token, personaName = 'Keel Advisor' }: ChatWidgetProps) {
+export function ChatWidget({ token, personaName = 'Keel Advisor', storageKey }: ChatWidgetProps) {
   const sessionId = useRef<string>(generateId());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Lazy initializer: restore from localStorage if available
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (!storageKey) return [];
+    try {
+      const saved = localStorage.getItem(storageKey);
+      return saved ? (JSON.parse(saved) as ChatMessage[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [draft, setDraft] = useState('');
   const [thinking, setThinking] = useState(false);
   const [approvalPending, setApprovalPending] = useState(false);
@@ -478,6 +488,16 @@ export function ChatWidget({ token, personaName = 'Keel Advisor' }: ChatWidgetPr
 
   // Toast
   const [toast, setToast] = useState<{ message: string; kind: 'success' | 'error' | 'info' } | null>(null);
+
+  // Persist messages to localStorage whenever they change
+  useEffect(() => {
+    if (!storageKey || messages.length === 0) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(messages));
+    } catch {
+      // Storage quota — ignore silently
+    }
+  }, [messages, storageKey]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -675,6 +695,26 @@ export function ChatWidget({ token, personaName = 'Keel Advisor' }: ChatWidgetPr
             animation: 'status-glow 2.4s ease-in-out infinite',
           }}
         />
+
+        {/* Clear history button */}
+        {messages.length > 0 && storageKey && (
+          <button
+            aria-label="Clear chat history"
+            title="Clear history"
+            onClick={() => {
+              setMessages([]);
+              try { localStorage.removeItem(storageKey); } catch { /* ignore */ }
+            }}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'rgba(240,236,221,0.55)', fontSize: '11px',
+              lineHeight: 1, padding: '2px 4px', flexShrink: 0,
+              fontFamily: 'Inter, system-ui, sans-serif',
+            }}
+          >
+            clear
+          </button>
+        )}
 
         {/* Close button */}
         <button

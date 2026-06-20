@@ -3,9 +3,19 @@ import { Spinner } from '@keel/ui';
 import { ChatWidget } from './ChatWidget';
 import './index.css';
 
+function decodeJwtStudentId(token: string): string | null {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return (payload.student_id as string) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [token, setToken] = useState<string | null>(null);
   const [personaName, setPersonaName] = useState<string>('Keel Advisor');
+  const [storageKey, setStorageKey] = useState<string | null>(null);
   const listenerAttached = useRef(false);
 
   useEffect(() => {
@@ -18,21 +28,18 @@ export default function App() {
         if (typeof e.data.personaName === 'string' && e.data.personaName) {
           setPersonaName(e.data.personaName);
         }
+        // Derive a stable storage key from the student_id in the JWT payload
+        const sid = decodeJwtStudentId(e.data.token);
+        if (sid) setStorageKey(`keel:chat:${sid}`);
       }
     }
 
     window.addEventListener('message', handleMessage);
-
-    // Ask the parent for the token on mount
     window.parent.postMessage({ type: 'KEEL_TOKEN_REFRESH' }, '*');
-
-    return () => {
-      window.removeEventListener('message', handleMessage);
-    };
+    return () => window.removeEventListener('message', handleMessage);
   }, []);
 
   return (
-    // keel-dark skin applied here — all child components inherit the CSS variables
     <div
       className="keel-dark"
       style={{
@@ -46,7 +53,6 @@ export default function App() {
       }}
     >
       {token === null ? (
-        // Loading state — token not yet received from parent
         <div
           style={{
             flex: 1,
@@ -59,17 +65,12 @@ export default function App() {
           }}
         >
           <Spinner size={28} />
-          <span
-            style={{
-              fontSize: 'var(--text-sm)',
-              fontFamily: 'Inter, system-ui, sans-serif',
-            }}
-          >
+          <span style={{ fontSize: 'var(--text-sm)', fontFamily: 'Inter, system-ui, sans-serif' }}>
             Connecting…
           </span>
         </div>
       ) : (
-        <ChatWidget token={token} personaName={personaName} />
+        <ChatWidget token={token} personaName={personaName} storageKey={storageKey ?? undefined} />
       )}
     </div>
   );
