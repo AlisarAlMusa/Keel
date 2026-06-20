@@ -8,7 +8,4 @@ export default defineConfig({
   build: {
     outDir: 'dist',
   },
-  // Expose VITE_* env vars to the React app so branding can be parameterized
-  // per portal instance without forking code (spec §S9, D-P5-004).
-  envPrefix: 'VITE_',
 })

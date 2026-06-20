@@ -33,6 +33,53 @@ Bucket: `keel-artifacts`.
 
 Experiment tracking. Port is 5001 on host (macOS AirPlay holds 5000).
 
+### Northane Portal — http://localhost:3001
+### Summit Portal — http://localhost:3002
+### Admin Dashboard — http://localhost:8000/admin-ui/
+### Platform Console — http://localhost:8000/platform-ui/
+
+---
+
+## Demo credentials (demo-only — never use in production)
+
+> All passwords are configurable via env vars (`KEEL_OPERATOR_PASSWORD`, `KEEL_ADMIN_PASSWORD`, `KEEL_PORTAL_PASSWORD`). The defaults below are the demo values seeded by `seed.py`.
+
+### Platform Operator (POST /auth/login → Keel API, then use Platform Console)
+| Email | Password |
+|---|---|
+| `operator@keel.platform` | `keel-operator-demo` |
+
+### Tenant Admins (POST /auth/login → Keel API, then use Admin Console)
+| Email | Password | Tenant |
+|---|---|---|
+| `admin@northane.edu` | `keel-admin-demo` | Northane University |
+| `admin@summit.edu` | `keel-admin-demo` | Summit College |
+
+### Portal Students (email + password on portal login page)
+| Email | Password | Portal | Notes |
+|---|---|---|---|
+| `alisar@northane.edu` | `keel-portal-demo` | Northane (:3001) | Maps to Alex Morgan |
+| `omar@northane.edu` | `keel-portal-demo` | Northane (:3001) | Maps to Jordan Lee |
+| `lina@northane.edu` | `keel-portal-demo` | Northane (:3001) | Maps to Riley Chen (at-risk) |
+| `maya@summit.edu` | `keel-portal-demo` | Summit (:3002) | Maps to Taylor Brooks |
+| `jad@summit.edu` | `keel-portal-demo` | Summit (:3002) | Maps to Morgan Patel |
+| `sara@summit.edu` | `keel-portal-demo` | Summit (:3002) | Maps to Casey Wu (hold) |
+
+### Portal Registrars
+| Email | Password | Portal |
+|---|---|---|
+| `registrar@northane.edu` | `keel-portal-demo` | Northane (:3001) |
+| `registrar@summit.edu` | `keel-portal-demo` | Summit (:3002) |
+
+---
+
+## Cross-tenant demo flow
+
+1. Log into Northane portal (`http://localhost:3001`) as `alisar@northane.edu` → My Schedule → open widget → plan → approve → enroll → `via Keel` badge appears.
+2. Log into Summit portal (`http://localhost:3002`) as `maya@summit.edu` (different origin) → only Summit data is visible.
+3. **Prove isolation:** replay a Northane widget token against Summit → 403; use Summit-origin mint for Northane tenant → 403.
+4. **Operator suspends Summit:** log into Platform Console as `operator@keel.platform` → Tenants → Suspend Summit. Summit students still log into the portal and see My Schedule (SIS stays up), but the widget returns 403 and shows "unavailable". Northane is fully unaffected. Unsuspend restores the widget.
+
 ---
 
 ### Not browser-accessible (internal Docker network only)

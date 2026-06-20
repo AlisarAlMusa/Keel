@@ -15,7 +15,8 @@
   --frost:          #8BA3C5;   /* muted accent, borders, secondary text on dark */
   --steel:          #495B7D;   /* mid-tone; secondary buttons; secondary text on light */
   --storm:          #23354D;   /* card/panel surface on dark; headers on light */
-  --oxford:         #02122F;   /* darkest — widget bg; primary text on light */
+  --oxford:         #000435;   /* deep navy — widget bg; primary text on light */
+  --mahogany:       #4B2E0A;   /* dark warm brown from the Keel cap mark — accent & highlight */
 
   /* ── Status / badge extensions (frontend.md §2.2) ─ */
   --accent:         #5BC2E7;   /* focus rings, active tab, links, streaming dot */
@@ -70,7 +71,7 @@
   --input-bg:   var(--storm);
   --input-text: var(--moonlight);
   --input-border: var(--steel);
-  --shadow: 0 8px 32px rgba(2, 18, 47, 0.45);
+  --shadow: 0 8px 32px rgba(0, 4, 53, 0.45);
 }
 
 /* ── Light admin skin ──────────────────────────────── */
@@ -80,7 +81,7 @@
   --border:     #d0dae8;
   --text:       var(--oxford);
   --text-muted: var(--steel);
-  --btn-primary-bg:   var(--storm);
+  --btn-primary-bg:   var(--mahogany);
   --btn-primary-text: var(--moonlight);
   --btn-secondary-bg: transparent;
   --btn-secondary-border: var(--steel);

@@ -15,6 +15,8 @@ Phase 5 additions:
 - app.state.widget_token_secret  — for JWT widget token signing
 - app.state.jwt_signing_key      — for portal session cookie signing
 - app.state.widget_origins_map   — in-memory cache of per-tenant origins
+- app.state.widget_persona_map   — in-memory cache of per-tenant persona names
+- app.state.tenant_names         — list of (tenant_id, slug, name) for guardrail
 - Portal router mounted at /portal
 - Static files: /widget.js loader, /widget/ app, /portal/ app, /admin/ app
 """
@@ -38,9 +40,11 @@ from keel.agent.graph import build_agent, run_agent
 from keel.agent.tools import AgentDeps
 from keel.api.routers import actions as actions_router
 from keel.api.routers import admin as admin_router
+from keel.api.routers import auth_admin as auth_admin_router
 from keel.api.routers import chat as chat_router
 from keel.api.routers import health
 from keel.api.routers import internal as internal_router
+from keel.api.routers import platform as platform_router
 from keel.config import Settings, get_settings
 from keel.domain.models import Term
 from keel.infra import redis as redis_infra
@@ -65,25 +69,55 @@ def _dsn_with_password(database_url: str, password: str) -> str:
     return database_url.replace(":placeholder@", f":{password}@", 1)
 
 
-async def _load_widget_origins(
+async def _load_widget_config(
     session_factory: object, app_state: object
 ) -> None:
-    """Populate the in-memory origins cache from widget_config rows."""
+    """Populate in-memory caches from widget_config and tenants tables.
+
+    Uses SECURITY DEFINER functions so keel_app (NOBYPASSRLS) can read all
+    tenants' rows at startup without SET LOCAL row_security = OFF.
+    """
     sf: async_sessionmaker[AsyncSession] = session_factory  # type: ignore[assignment]
     try:
         async with sf() as session:
-            # Use SECURITY DEFINER function (postgres-owned, BYPASSRLS) so
-            # keel_app (NOBYPASSRLS) can read all tenants' configs at startup
-            # without needing SET LOCAL row_security = OFF (superuser-only).
-            rows = await session.execute(text("SELECT tenant_id, allowed_origins FROM widget_origins_all()"))
+            # widget_config_all: persona_name + allowed_origins per tenant
+            cfg_rows = await session.execute(
+                text("SELECT tenant_id, persona_name, persona, allowed_origins FROM widget_config_all()")
+            )
             origins_map: dict[str, list[str]] = {}
-            for tenant_id, allowed_origins in rows:
-                origins_map[str(tenant_id)] = list(allowed_origins or [])
+            persona_map: dict[str, str] = {}
+            persona_prompt_map: dict[str, str] = {}
+            for tid, pname, persona_prompt, allowed_origins in cfg_rows:
+                origins_map[str(tid)] = list(allowed_origins or [])
+                persona_map[str(tid)] = pname or "Keel"
+                if persona_prompt:
+                    persona_prompt_map[str(tid)] = persona_prompt
             app_state.widget_origins_map = origins_map  # type: ignore[attr-defined]
-            _log.info("widget_origins_cache_loaded", tenants=len(origins_map))
+            app_state.widget_persona_map = persona_map  # type: ignore[attr-defined]
+            app_state.widget_persona_prompt_map = persona_prompt_map  # type: ignore[attr-defined]
+
+            # tenant_names_all: (id, slug, name) — used by cross-tenant guardrail
+            name_rows = await session.execute(
+                text("SELECT id, slug, name FROM tenant_names_all()")
+            )
+            # list of (tenant_id, slug, display_name) tuples
+            app_state.tenant_names = [  # type: ignore[attr-defined]
+                (str(tid), slug or "", tname or "")
+                for tid, slug, tname in name_rows
+            ]
+            _log.info(
+                "widget_config_cache_loaded",
+                tenants=len(origins_map),
+            )
     except Exception as exc:  # noqa: BLE001
-        _log.warning("widget_origins_cache_failed", error=type(exc).__name__)
+        _log.warning("widget_config_cache_failed", error=type(exc).__name__)
         app_state.widget_origins_map = {}  # type: ignore[attr-defined]
+        app_state.widget_persona_map = {}  # type: ignore[attr-defined]
+        app_state.tenant_names = []  # type: ignore[attr-defined]
+
+
+# Keep old name as shim so existing call sites compile
+_load_widget_origins = _load_widget_config
 
 
 @asynccontextmanager
@@ -173,8 +207,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         app.state.agent_run = _agent_run
 
-        # Phase 5: warm the widget origins in-memory cache
-        await _load_widget_origins(app.state.session_factory, app.state)
+        # Phase 5: warm widget config cache (origins + persona + tenant names)
+        await _load_widget_config(app.state.session_factory, app.state)
 
         _log.info("startup_complete")
         try:
@@ -198,8 +232,10 @@ def create_app() -> FastAPI:
         allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Tenant-Id", "X-Admin-Token",
-                       "X-Idempotency-Key"],
+        allow_headers=[
+            "Authorization", "Content-Type", "X-Tenant-Id", "X-Admin-Token",
+            "X-Idempotency-Key",
+        ],
     )
 
     # API routers
@@ -208,6 +244,9 @@ def create_app() -> FastAPI:
     app.include_router(admin_router.router)
     app.include_router(actions_router.router)
     app.include_router(internal_router.router)
+    # Phase 5 addendum: email+password login + platform operator
+    app.include_router(auth_admin_router.router)
+    app.include_router(platform_router.router)
 
     # widget.js loader (inline; fronts the widget iframe)
     @app.get("/widget.js", include_in_schema=False)
@@ -220,10 +259,12 @@ def create_app() -> FastAPI:
         stub = _WIDGET_JS_STUB
         return _Resp(content=stub, media_type="application/javascript")
 
+    # Brand assets (keel-icon.png, keel-logo.png) — referenced by widget iframe and admin console
+    _mount_static_if_exists(app, "/static", _FRONTEND_ROOT / "static", "brand-static")
     # Static frontends (served after build; ignored if dirs don't exist yet)
     _mount_static_if_exists(app, "/widget", _FRONTEND_ROOT / "widget" / "dist", "widget")
-    _mount_static_if_exists(app, "/admin-ui", _FRONTEND_ROOT / "admin" / "dist", "admin-ui")
-    _mount_static_if_exists(app, "/portal-ui", _FRONTEND_ROOT / "portal" / "dist", "portal-ui")
+    # Unified Keel console (tenant_admin + platform_operator, role-based routing)
+    _mount_static_if_exists(app, "/keel", _FRONTEND_ROOT / "admin" / "dist", "keel-console")
 
     tracing.instrument_fastapi(app)
     return app

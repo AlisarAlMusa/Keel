@@ -90,11 +90,15 @@ def _system_prompt(context: ContextEnvelope, snapshot: dict[str, Any] | None) ->
         snap_text = "\n\nStudent snapshot (engine-computed, authoritative):\n" + json.dumps(
             snapshot, indent=2
         )
-    return _SYSTEM_PROMPT_TEMPLATE.format(
+    base = _SYSTEM_PROMPT_TEMPLATE.format(
         student_id=context.student_id,
         tenant_id=context.tenant_id,
         snapshot=snap_text,
     )
+    # Prepend the tenant-configured persona instruction (from widget_config.persona).
+    # This overrides the generic opening so each institution can brand the advisor.
+    persona = getattr(context, "persona_prompt", None) or "You are Keel, a helpful AI academic advisor."
+    return f"{persona}\n\n{base}"
 
 
 async def _load_session_history(

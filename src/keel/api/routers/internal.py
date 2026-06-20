@@ -33,6 +33,7 @@ class MintTokenRequest(BaseModel):
 class MintTokenResponse(BaseModel):
     token: str
     expires_in: int
+    persona_name: str
 
 
 def _verify_service_secret(request: Request) -> None:
@@ -69,9 +70,12 @@ async def mint_token(body: MintTokenRequest, request: Request) -> MintTokenRespo
         student_id=body.student_id,
     )
 
+    persona_map: dict[str, str] = getattr(request.app.state, "widget_persona_map", {})
+    persona_name = persona_map.get(body.tenant_id, "Keel")
+
     _log.info(
         "internal.token_minted",
         tenant_id=body.tenant_id,
         student_id=body.student_id,
     )
-    return MintTokenResponse(token=token, expires_in=900)
+    return MintTokenResponse(token=token, expires_in=900, persona_name=persona_name)

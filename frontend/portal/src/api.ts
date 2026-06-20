@@ -26,12 +26,12 @@ export interface LoginResponse {
   role: string;
 }
 
-export async function login(studentId: string, role: string): Promise<LoginResponse> {
+export async function login(email: string, password: string): Promise<LoginResponse> {
   const res = await fetch(`${BASE}/login`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ student_id: studentId, role }),
+    body: JSON.stringify({ email, password }),
   });
   return handleResponse<LoginResponse>(res);
 }
@@ -43,6 +43,7 @@ export async function logout(): Promise<void> {
 export interface KeelTokenResponse {
   token: string;
   expires_in: number;
+  persona_name?: string;
 }
 
 export async function getKeelToken(): Promise<KeelTokenResponse> {
@@ -58,11 +59,12 @@ export interface Enrollment {
   status: string;
   source: string;
   section_id: string;
+  section_num: number;
   term: string;
-  days: string;
-  start_time: string;
-  end_time: string;
-  instructor: string;
+  year: number;
+  days: string | null;
+  start_time: string | null;
+  end_time: string | null;
   course_code: string;
   course_title: string;
   credits: number;
@@ -80,12 +82,14 @@ export async function getSchedule(): Promise<ScheduleResponse> {
 export interface RequestItem {
   id: string;
   student_id: string;
+  student_name?: string;
+  student_email?: string;
   type: string;
   status: string;
   payload: Record<string, unknown>;
-  note: string | null;
   created_at: string;
-  updated_at: string;
+  resolved_at: string | null;
+  target: string | null;
 }
 
 export interface RequestsResponse {
@@ -101,8 +105,8 @@ export interface ActivityItem {
   id: string;
   actor: string;
   action: string;
-  before_state: Record<string, unknown> | null;
-  after_state: Record<string, unknown> | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
   created_at: string;
 }
 
@@ -166,11 +170,13 @@ export interface Section {
   id: string;
   course_code: string;
   course_title: string;
+  section_num: number;
   term: string;
-  days: string;
-  start_time: string;
-  end_time: string;
-  instructor: string;
+  year: number;
+  days: string | null;
+  start_time: string | null;
+  end_time: string | null;
+  instructor: string | null;
   capacity: number;
   enrolled: number;
 }

@@ -749,3 +749,53 @@ survives session. Cookie from keel-api to the iframe — would require `SameSite
 Secure` and a more complex setup for cross-origin cookie use.
 
 ---
+
+## Phase 5 Addendum — Platform Operator, Admin/Operator Auth, Second Tenant Portal
+
+### D-A-001 — Third role restored: platform operator
+
+**Decision.** `platform_operator` is added to the `users` table role set. The operator identity carries **no `tenant_id`** (column is nullable from migration 0006), enforced by two DB check constraints: `ck_operator_no_tenant` and `ck_admin_has_tenant`. Operator endpoints live under `/platform/*` and are guarded by `require_role("platform_operator")`.
+
+**Rationale.** Without the operator, there is no way to provision / suspend / erase tenants short of direct DB access. The operator is a "controlled doorway, not god mode" — it touches only platform-domain tables and aggregate functions, never tenant content.
+
+**Rejected.** A superuser/god-mode role that can read all tenant data — structural isolation invariant would be gone. A separate admin microservice — unnecessary complexity for a demo.
+
+---
+
+### D-A-002 — Auth = email + password for admin and operator
+
+**Decision.** Both `tenant_admin` and `platform_operator` authenticate via `POST /auth/login` with email + bcrypt password. The issued JWT carries `{ sub, role, iat, exp }` plus `tenant_id` for admins (omitted for operators). The admin login applies `assert_tenant_active` — a suspended tenant's admin cannot log into Keel.
+
+**Rationale.** A tenant-id-only auth (the previous X-Admin-Token approach) gives no per-person accountability and is semi-public (it ships in widget snippets). Email + password is the standard web auth pattern and maps cleanly to the existing `users` table.
+
+**Rejected.** Keeping X-Admin-Token — not a real auth mechanism, fails the "per-person accountability" requirement. fastapi-users — full framework for our two-role use case is over-engineering; a single endpoint using bcrypt + PyJWT is sufficient.
+
+---
+
+### D-A-003 — Portal login is real email + password, portal-domain only
+
+**Decision.** `POST /portal/login` now accepts `{ email, password }`. The portal server calls `portal_find_by_email()` (SECURITY DEFINER, bypasses RLS for the pre-session lookup), verifies bcrypt, asserts the account's tenant_id matches `PORTAL_TENANT` (the instance env var), and sets the session cookie. Keel's `users` table is untouched — this is portal-domain auth only.
+
+**No suspend check at `/portal/login`.** Suspension darkens Keel (the AI layer), not the university's SIS. Students still log into the portal and see My Schedule even when Keel is suspended. The suspend gate fires at `/portal/keel-token` (widget token mint) and `/chat`.
+
+**Rejected.** Checking suspend at login — Keel has no authority over the SIS portal. Storing portal passwords in Keel's `users` table — blurs the SIS/Keel domain boundary that is the core architecture claim.
+
+---
+
+### D-A-004 — Second tenant portal = one image, two compose services
+
+**Decision.** `portal-northane` (:3001) and `portal-summit` (:3002) are two compose services from the **same Dockerfile**, differentiated only by env (`PORTAL_TENANT`, `PORT`, `VITE_UNIVERSITY_NAME`, `VITE_UNIVERSITY_INITIAL`). Each tenant's `widget_config.allowed_origins` is seeded with its portal origin (`http://localhost:3001` / `:3002`).
+
+**Rationale.** Two origins make the Keel origin-check demonstrable across tenants — a Northane token replayed on Summit's origin is rejected. One codebase means Summit "follows Northane" by construction; no forked components.
+
+**Rejected.** Forking the portal frontend per tenant — code drift, double maintenance. A single portal serving both tenants — two origins cannot be demonstrated.
+
+---
+
+### D-A-005 — Erase is async, confirmation-gated, idempotent; platform_audit survives
+
+**Decision.** `POST /platform/tenants/{id}/erase` validates `confirm_name == tenant.name`, writes a `platform_audit('erase', requested=True)` row, then enqueues `erase_tenant_job` via RQ. The worker cascade-deletes every row carrying `tenant_id` (including `portal_user` rows for that tenant), then deletes MinIO objects prefixed by the tenant_id, then deletes the tenant row. `platform_audit` uses `ON DELETE SET NULL` on the FK so audit rows survive the tenant deletion. Rerun on an already-erased tenant is a no-op.
+
+**Rejected.** Synchronous erase in the request path — too slow and blocks the response for large tenants. Silent erase without confirmation — unrecoverable mistake if tenant name is mistyped.
+
+---

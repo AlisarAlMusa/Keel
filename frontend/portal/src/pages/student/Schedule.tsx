@@ -40,11 +40,13 @@ export function Schedule({ refreshSignal }: ScheduleProps) {
     <span style={{ fontWeight: 600, fontFamily: 'Inter, system-ui, sans-serif' }}>{e.course_code}</span>,
     e.course_title,
     <span style={{ textAlign: 'center', display: 'block' }}>{e.credits}</span>,
-    e.section_id,
-    e.term,
-    e.start_time && e.end_time
-      ? `${e.days ?? ''} ${e.start_time}–${e.end_time}`.trim()
-      : (e.days ?? '—'),
+    <span style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
+      {String(e.section_num ?? 1).padStart(3, '0')}
+    </span>,
+    `${e.term.charAt(0).toUpperCase() + e.term.slice(1)} ${e.year ?? ''}`.trim(),
+    e.days && e.start_time && e.end_time
+      ? `${e.days} ${e.start_time}–${e.end_time}`
+      : e.days ?? '—',
     <Badge
       variant={
         e.status === 'enrolled'

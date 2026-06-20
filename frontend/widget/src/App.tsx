@@ -5,6 +5,7 @@ import './index.css';
 
 export default function App() {
   const [token, setToken] = useState<string | null>(null);
+  const [personaName, setPersonaName] = useState<string>('Keel Advisor');
   const listenerAttached = useRef(false);
 
   useEffect(() => {
@@ -14,6 +15,9 @@ export default function App() {
     function handleMessage(e: MessageEvent) {
       if (e.data?.type === 'KEEL_TOKEN' && typeof e.data.token === 'string') {
         setToken(e.data.token);
+        if (typeof e.data.personaName === 'string' && e.data.personaName) {
+          setPersonaName(e.data.personaName);
+        }
       }
     }
 
@@ -65,7 +69,7 @@ export default function App() {
           </span>
         </div>
       ) : (
-        <ChatWidget token={token} />
+        <ChatWidget token={token} personaName={personaName} />
       )}
     </div>
   );

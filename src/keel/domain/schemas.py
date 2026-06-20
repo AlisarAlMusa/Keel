@@ -76,3 +76,4 @@ class ContextEnvelope(BaseModel):
     request_id: str
     message: str
     preferences: StudentPreference = StudentPreference()
+    persona_prompt: str = "You are Keel, a helpful AI academic advisor."

@@ -30,8 +30,8 @@ export interface ChatMessage {
 }
 
 export interface ChatResponse {
-  text: string;
-  session_id: string;
+  response: string;  // matches API ChatResponse.response field
+  request_id: string;
   plan?: PlanData;
   plans?: PlanData[];
   action_id?: string;

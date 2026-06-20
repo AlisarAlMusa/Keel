@@ -80,7 +80,7 @@ export function Activity() {
                     {item.action.replace(/_/g, ' ').replace(/\./g, ' → ')}
                   </span>
                 </div>
-                {item.after_state && (
+                {item.after && (
                   <div
                     style={{
                       fontSize: '0.775rem',
@@ -88,11 +88,11 @@ export function Activity() {
                       fontFamily: 'Inter, system-ui, sans-serif',
                     }}
                   >
-                    {typeof item.after_state === 'object'
-                      ? Object.entries(item.after_state)
+                    {typeof item.after === 'object'
+                      ? Object.entries(item.after)
                           .map(([k, v]) => `${k}: ${String(v)}`)
                           .join(' · ')
-                      : String(item.after_state)}
+                      : String(item.after)}
                   </div>
                 )}
               </div>

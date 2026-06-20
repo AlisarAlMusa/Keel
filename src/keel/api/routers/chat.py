@@ -22,11 +22,13 @@ import uuid
 from typing import Annotated, Any
 
 import cohere
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
 
 from keel.api.auth import WidgetContext, get_widget_context, verify_origin_or_403
+from keel.api.deps import get_session
+from keel.api.routers.auth_admin import assert_tenant_active
 from keel.domain.schemas import ContextEnvelope, RouterResult, StudentPreference
 from keel.infra.guardrails import check_input, redact
 from keel.infra.model_client import ModelClient
@@ -94,6 +96,7 @@ async def chat(
     ctx: Annotated[WidgetContext, Depends(get_widget_context)],
     model_client: Annotated[ModelClient, Depends(_get_model_client)],
     llm_lite: Annotated[ChatGoogleGenerativeAI, Depends(_get_llm_lite)],
+    session: Annotated[Any, Depends(get_session)] = None,
 ) -> ChatResponse:
     """Single student message → guardrails → router → response.
 
@@ -101,6 +104,11 @@ async def chat(
     """
     # Origin check (defense-in-depth; JWT already verifies identity)
     verify_origin_or_403(request, ctx.tenant_id)
+
+    # Suspend gate: if the tenant is suspended, the widget goes dark (403).
+    # Note: tenants table has no RLS, so a plain session suffices here.
+    if session is not None:
+        await assert_tenant_active(ctx.tenant_id, session)
 
     request_id = str(uuid.uuid4())
     prompt_hash = hashlib.sha256(body.message.encode()).hexdigest()[:16]
@@ -115,7 +123,18 @@ async def chat(
     )
 
     # --- Guardrails: input rail ---
-    decision = check_input(body.message, tenant_id=ctx.tenant_id)
+    # Build list of other tenants' slugs+names for cross-tenant name detection.
+    all_tenants: list[tuple[str, str, str]] = getattr(request.app.state, "tenant_names", [])
+    other_tenant_names = [
+        (slug, name)
+        for tid, slug, name in all_tenants
+        if tid != ctx.tenant_id
+    ]
+    decision = check_input(
+        body.message,
+        tenant_id=ctx.tenant_id,
+        other_tenant_names=other_tenant_names,
+    )
     if not decision.safe:
         _log.warning(
             "chat.guardrail_refused",
@@ -123,12 +142,28 @@ async def chat(
             reason=decision.reason,
             tenant_id=ctx.tenant_id,
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Message refused by content guardrails: {decision.reason}",
+        if decision.reason == "cross_tenant_probe":
+            refusal = (
+                "I can only access information for your institution. "
+                "Accessing data from other universities is not permitted — "
+                "each institution's data is private and isolated."
+            )
+        else:
+            refusal = (
+                "I'm not able to process that request. "
+                "I'm here to help with your courses, plans, and academic advising."
+            )
+        return ChatResponse(
+            response=refusal,
+            request_id=request_id,
+            router=RouterResult(label="guardrail", confidence=1.0, route_to_agent=False),
         )
 
     # --- Build envelope (identity from JWT, never from body) ---
+    persona_prompt_map: dict[str, str] = getattr(request.app.state, "widget_persona_prompt_map", {})
+    persona_prompt = persona_prompt_map.get(
+        ctx.tenant_id, "You are Keel, a helpful AI academic advisor."
+    )
     envelope = ContextEnvelope(
         tenant_id=ctx.tenant_id,
         student_id=ctx.student_id,
@@ -136,6 +171,7 @@ async def chat(
         request_id=request_id,
         message=body.message,
         preferences=StudentPreference(),
+        persona_prompt=persona_prompt,
     )
 
     # --- Route ---

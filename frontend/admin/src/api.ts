@@ -1,20 +1,26 @@
 /**
- * Typed fetch wrappers for all Keel Admin API endpoints.
- * All requests carry X-Admin-Token and X-Tenant-Id headers.
+ * Typed fetch wrappers for the unified Keel console.
+ * Auth: Bearer JWT issued by POST /auth/login.
+ *   - role=tenant_admin    → /admin/* endpoints
+ *   - role=platform_operator → /platform/* endpoints
+ * Token is stored in memory only (never localStorage).
  */
 
 const BASE = (import.meta.env.VITE_KEEL_API_URL as string) || '';
 
-export interface AuthHeaders {
-  token: string;
-  tenantId: string;
-}
+let _token: string | null = null;
+let _tenantId: string | null = null;
 
-function headers(auth: AuthHeaders): Record<string, string> {
-  return {
-    'X-Admin-Token': auth.token,
-    'X-Tenant-Id': auth.tenantId,
-  };
+export function setToken(t: string) { _token = t; }
+export function clearToken() { _token = null; _tenantId = null; }
+export function hasToken() { return !!_token; }
+export function setTenantId(id: string) { _tenantId = id; }
+export function getTenantId() { return _tenantId ?? ''; }
+
+function authHeaders(): Record<string, string> {
+  const h: Record<string, string> = {};
+  if (_token) h['Authorization'] = `Bearer ${_token}`;
+  return h;
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -31,119 +37,196 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ── RAG Upload ────────────────────────────────────────────────────────────────
-
-export interface RagUploadResponse {
-  chunks_estimated: number;
-  filename?: string;
-  chunk_type?: string;
+async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(opts.headers as Record<string, string> ?? {}),
+    ...authHeaders(),
+  };
+  const res = await fetch(`${BASE}${path}`, { ...opts, headers });
+  return handleResponse<T>(res);
 }
 
-export async function uploadDocument(
-  auth: AuthHeaders,
-  file: File,
-  chunkType: string,
-): Promise<RagUploadResponse> {
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+export interface LoginResponse {
+  tenant_name: string | null;
+  token: string;
+  role: string;
+  tenant_id: string | null;
+  expires_in: number;
+}
+
+export async function login(email: string, password: string): Promise<LoginResponse> {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  return handleResponse<LoginResponse>(res);
+}
+
+// ── Admin: RAG Upload ─────────────────────────────────────────────────────────
+
+export interface RagUploadResponse {
+  source: string;
+  job_id: string;
+  chunks_estimated: number;
+  status: string;
+}
+
+export async function uploadDocument(file: File, chunkType: string): Promise<RagUploadResponse> {
   const form = new FormData();
   form.append('file', file);
-  const url = `${BASE}/admin/rag/upload?chunk_type=${encodeURIComponent(chunkType)}`;
-  const res = await fetch(url, {
+  const res = await fetch(`${BASE}/admin/rag/upload?chunk_type=${encodeURIComponent(chunkType)}`, {
     method: 'POST',
-    headers: headers(auth),
+    headers: authHeaders(),
     body: form,
   });
   return handleResponse<RagUploadResponse>(res);
 }
 
-// ── Widget Config ─────────────────────────────────────────────────────────────
+// ── Admin: Widget Config ──────────────────────────────────────────────────────
 
 export interface WidgetConfig {
-  persona_prompt: string;
+  persona: string;
   persona_name: string;
   allowed_origins: string[];
   enabled_tools: string[];
 }
 
-export async function getWidgetConfig(auth: AuthHeaders): Promise<WidgetConfig> {
-  const res = await fetch(`${BASE}/admin/widget-config`, {
-    headers: headers(auth),
-  });
-  return handleResponse<WidgetConfig>(res);
+export async function getWidgetConfig(): Promise<WidgetConfig> {
+  return req<WidgetConfig>('/admin/widget-config');
 }
 
-export async function putWidgetConfig(
-  auth: AuthHeaders,
-  config: WidgetConfig,
-): Promise<WidgetConfig> {
-  const res = await fetch(`${BASE}/admin/widget-config`, {
+export async function putWidgetConfig(config: WidgetConfig): Promise<WidgetConfig> {
+  return req<WidgetConfig>('/admin/widget-config', {
     method: 'PUT',
-    headers: { ...headers(auth), 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
   });
-  return handleResponse<WidgetConfig>(res);
 }
 
-// ── Widget Snippet ────────────────────────────────────────────────────────────
+// ── Admin: Widget Snippet ─────────────────────────────────────────────────────
 
 export interface WidgetSnippetResponse {
   snippet: string;
+  widget_id: string;
 }
 
-export async function getWidgetSnippet(
-  auth: AuthHeaders,
-): Promise<WidgetSnippetResponse> {
-  const res = await fetch(`${BASE}/admin/widget-snippet`, {
-    headers: headers(auth),
-  });
-  return handleResponse<WidgetSnippetResponse>(res);
+export async function getWidgetSnippet(): Promise<WidgetSnippetResponse> {
+  return req<WidgetSnippetResponse>('/admin/widget-snippet');
 }
 
-// ── Cost Dashboard ────────────────────────────────────────────────────────────
+// ── Admin: Cost ───────────────────────────────────────────────────────────────
 
 export type CostPeriod = 'day' | 'week' | 'month';
 
 export interface CostRow {
   kind: string;
-  model: string;
+  model: string | null;
   total_tokens: number;
-  estimated_cost_usd: number;
-  events: number;
+  total_cost_usd: number;
+  event_count: number;
 }
 
 export interface CostResponse {
   period: CostPeriod;
+  tenant_id: string;
   rows: CostRow[];
+  total_cost_usd: number;
 }
 
-export async function getCost(
-  auth: AuthHeaders,
-  period: CostPeriod,
-): Promise<CostResponse> {
-  const res = await fetch(`${BASE}/admin/cost?period=${period}`, {
-    headers: headers(auth),
-  });
-  return handleResponse<CostResponse>(res);
+export async function getCost(period: CostPeriod): Promise<CostResponse> {
+  return req<CostResponse>(`/admin/cost?period=${period}`);
 }
 
-// ── Audit Log ─────────────────────────────────────────────────────────────────
+// ── Admin: Audit Log ──────────────────────────────────────────────────────────
 
 export interface AuditEntry {
+  id: number;
   actor: string;
   action: string;
+  before: unknown;
   after: unknown;
-  time: string;
+  created_at: string;
 }
 
 export interface AuditResponse {
-  entries: AuditEntry[];
+  rows: AuditEntry[];
+  total: number;
 }
 
-export async function getAuditLog(
-  auth: AuthHeaders,
-  limit: number,
-): Promise<AuditResponse> {
-  const res = await fetch(`${BASE}/admin/audit?limit=${limit}`, {
-    headers: headers(auth),
-  });
-  return handleResponse<AuditResponse>(res);
+export async function getAuditLog(limit: number): Promise<AuditResponse> {
+  return req<AuditResponse>(`/admin/audit?limit=${limit}`);
 }
+
+// ── Platform: Tenants ─────────────────────────────────────────────────────────
+
+export interface TenantRow {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  created_at: string;
+  student_count: number;
+  admin_count: number;
+}
+
+export interface TenantListResponse { tenants: TenantRow[]; }
+export interface ProvisionResponse { tenant_id: string; admin_email: string; status: string; }
+export interface SuspendResponse { tenant_id: string; status: string; }
+export interface EraseResponse { tenant_id: string; status: string; }
+
+export const listTenants = () => req<TenantListResponse>('/platform/tenants');
+
+export const provision = (name: string, admin_email: string) =>
+  req<ProvisionResponse>('/platform/tenants', {
+    method: 'POST',
+    body: JSON.stringify({ name, admin_email }),
+  });
+
+export const suspendTenant = (id: string) =>
+  req<SuspendResponse>(`/platform/tenants/${id}/suspend`, { method: 'POST' });
+
+export const unsuspendTenant = (id: string) =>
+  req<SuspendResponse>(`/platform/tenants/${id}/unsuspend`, { method: 'POST' });
+
+export const eraseTenant = (id: string, confirm_name: string) =>
+  req<EraseResponse>(`/platform/tenants/${id}/erase`, {
+    method: 'POST',
+    body: JSON.stringify({ confirm_name }),
+  });
+
+// ── Platform: Cost (cross-tenant aggregate) ───────────────────────────────────
+
+export interface PlatformCostRow {
+  tenant_id: string;
+  kind: string;
+  calls: number;
+  tokens: number;
+  cost_usd: number;
+}
+
+export interface PlatformCostResponse {
+  period: string;
+  rows: PlatformCostRow[];
+  note: string;
+}
+
+export const getPlatformCost = (period = 'week') =>
+  req<PlatformCostResponse>(`/platform/cost?period=${period}`);
+
+// ── Platform: Audit ───────────────────────────────────────────────────────────
+
+export interface PlatformAuditRow {
+  id: number;
+  action: string;
+  target_tenant_id: string | null;
+  detail: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface PlatformAuditResponse { rows: PlatformAuditRow[]; }
+
+export const getPlatformAudit = (limit = 50) =>
+  req<PlatformAuditResponse>(`/platform/audit?limit=${limit}`);

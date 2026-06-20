@@ -65,6 +65,20 @@ class ProposePlanInput(BaseModel):
     tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
     start_term: str = Field(description="Term to plan for: 'fall', 'spring', or 'summer'.")
     start_year: int = Field(description="Calendar year of the term, e.g. 2026.")
+    excluded_days: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Days the student wants NO classes. Use short lowercase names: "
+            "'mon','tue','wed','thu','fri'. E.g. ['fri'] to avoid Fridays."
+        ),
+    )
+    min_start_hour: int = Field(
+        default=0,
+        description=(
+            "Earliest class start hour the student accepts (24-h, 0 = no restriction). "
+            "E.g. 9 means no classes before 9:00 AM (avoids 8 AM sections)."
+        ),
+    )
 
 
 class SimulateWhatIfInput(BaseModel):
@@ -137,6 +151,8 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
         tenant_id: str,
         start_term: str,
         start_year: int,
+        excluded_days: list[str] | None = None,
+        min_start_hour: int = 0,
     ) -> str:
         """Build up to 3 feasible, risk-scored, workload-banded course plans.
         Each plan is engine-verified before risk is scored.
@@ -301,6 +317,86 @@ def make_planning_tools(deps: AgentDeps) -> list[Any]:
                 catalog=catalog,
                 audit_result=audit_result,
             )
+
+            # --- Section time preference check ---
+            # Query sections for the first candidate's courses and report availability
+            # filtered by the student's time preferences (excluded_days, min_start_hour).
+            ex_days = {d.lower() for d in (excluded_days or [])}
+            min_min = (min_start_hour or 0) * 60  # convert hour → minutes-since-midnight
+
+            if scored and (ex_days or min_min > 0):
+                first_codes = scored[0]["plan"].terms[0].course_codes if scored[0]["plan"].terms else []
+                section_notes: list[str] = []
+                if first_codes:
+                    try:
+                        async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
+                            rows = await _db.execute(
+                                sa.text(
+                                    "SELECT course_code, slots FROM sections "
+                                    "WHERE tenant_id = :tid AND term = :term AND year = :yr "
+                                    "AND course_code = ANY(:codes) AND enrolled < capacity"
+                                ),
+                                {
+                                    "tid": tenant_id,
+                                    "term": start_term.lower(),
+                                    "yr": start_year,
+                                    "codes": list(first_codes),
+                                },
+                            )
+                            sections_by_code: dict[str, list[dict]] = {}
+                            for code, slots in rows:
+                                sections_by_code.setdefault(code, []).append(slots)
+
+                        for code in first_codes:
+                            slot_lists = sections_by_code.get(code, [])
+                            ok = []
+                            bad = []
+                            for slots in slot_lists:
+                                days = {s["day"] for s in slots}
+                                earliest = min((s["start_min"] for s in slots), default=0)
+                                violates_day = bool(days & ex_days)
+                                violates_time = earliest < min_min
+                                if violates_day or violates_time:
+                                    bad.append(slots)
+                                else:
+                                    ok.append(slots)
+
+                            def _fmt(slots: list[dict]) -> str:
+                                parts = []
+                                for s in sorted(slots, key=lambda x: x["start_min"]):
+                                    h, m = divmod(s["start_min"], 60)
+                                    ampm = "AM" if h < 12 else "PM"
+                                    h12 = h % 12 or 12
+                                    parts.append(f"{s['day'].capitalize()} {h12}:{m:02d}{ampm}")
+                                return ", ".join(parts)
+
+                            if ok:
+                                section_notes.append(
+                                    f"  {code}: {len(ok)} section(s) meeting your schedule — e.g. {_fmt(ok[0])}"
+                                )
+                            elif bad:
+                                section_notes.append(
+                                    f"  {code}: only sections that conflict with your preferences "
+                                    f"(e.g. {_fmt(bad[0])}). Consider swapping this course."
+                                )
+                            else:
+                                section_notes.append(f"  {code}: no open sections this term.")
+
+                    except Exception as exc:  # noqa: BLE001
+                        _log.warning("tool.propose_plan.section_check_failed", error=str(exc))
+
+                if section_notes:
+                    pref_desc = []
+                    if ex_days:
+                        pref_desc.append("no " + "/".join(sorted(ex_days)) + " classes")
+                    if min_min > 0:
+                        h12 = min_start_hour % 12 or 12
+                        ampm = "AM" if min_start_hour < 12 else "PM"
+                        pref_desc.append(f"nothing before {h12}:00 {ampm}")
+                    ranking += (
+                        f"\n\n**Section availability (preference: {', '.join(pref_desc)}):**\n"
+                        + "\n".join(section_notes)
+                    )
 
             _log.info(
                 "tool.propose_plan.done",

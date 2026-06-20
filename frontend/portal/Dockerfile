@@ -8,6 +8,8 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # 1. Copy workspace manifests for layer-cache on npm install
+#    ARG/ENV declarations come AFTER this block so the npm install layer
+#    stays cached even when branding args change.
 COPY package.json package.json
 COPY ui/package.json ui/package.json
 COPY widget/package.json widget/package.json
@@ -21,7 +23,16 @@ RUN npm install --workspaces --include-workspace-root
 COPY ui/ ui/
 COPY portal/ portal/
 
-# 4. Build the portal React SPA
+# Build-time vars — declared HERE (after npm install) so ARG changes don't
+# bust the npm install cache layer. Vite bakes them into the bundle.
+ARG VITE_UNIVERSITY_NAME="Keel University"
+ARG VITE_UNIVERSITY_INITIAL="K"
+ARG VITE_KEEL_API_URL="http://localhost:8000"
+ENV VITE_UNIVERSITY_NAME=$VITE_UNIVERSITY_NAME
+ENV VITE_UNIVERSITY_INITIAL=$VITE_UNIVERSITY_INITIAL
+ENV VITE_KEEL_API_URL=$VITE_KEEL_API_URL
+
+# 4. Build the portal React SPA (picks up VITE_* vars above)
 WORKDIR /app/portal
 RUN npm run build
 

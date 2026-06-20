@@ -23,16 +23,20 @@ interface KeelWidgetProps {
 
 export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false); // true once opened first time
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const personaNameRef = useRef<string>('Keel Advisor');
 
-  // Fetch token and post to iframe
+  // Fetch token and post to iframe — also sends personaName so widget can set header
   const postToken = useCallback(async () => {
     try {
-      const { token } = await getKeelToken();
+      const data = await getKeelToken();
+      personaNameRef.current = (data as { token: string; persona_name?: string }).persona_name || 'Keel Advisor';
       iframeRef.current?.contentWindow?.postMessage(
-        { type: 'KEEL_TOKEN', token },
+        { type: 'KEEL_TOKEN', token: data.token, personaName: personaNameRef.current },
         KEEL_API_URL || '*'
       );
     } catch (err) {
@@ -79,7 +83,10 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
   function handleOpen() {
     setError(null);
     setOpen(true);
-    setLoading(true);
+    if (!mounted) {
+      setMounted(true);
+      setLoading(true);
+    }
   }
 
   function handleClose() {
@@ -91,7 +98,7 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
 
   return (
     <>
-      {/* Floating chat button */}
+      {/* Floating chat button — chat-bubble shape (reverse Q: circle + tail bottom-left) */}
       <button
         onClick={handleOpen}
         aria-label="Open Keel advisor"
@@ -99,58 +106,64 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
           position: 'fixed',
           bottom: '28px',
           right: '28px',
-          width: '56px',
-          height: '56px',
-          borderRadius: '50%',
-          background: '#02122f',
-          border: 'none',
+          width: '68px',
+          height: '68px',
+          /* border-radius: large on top-left, top-right, bottom-right; 0 on bottom-left for the tail */
+          borderRadius: '50% 50% 50% 8px',
+          background: '#000435',
+          border: '2.5px solid #4B2E0A',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          boxShadow: '0 4px 20px rgba(2,18,47,0.35)',
+          boxShadow: '0 4px 24px rgba(0,4,53,0.55), 0 0 0 0 rgba(75,46,10,0.4)',
           zIndex: 900,
+          padding: '6px',
+          overflow: 'hidden',
           transition: 'transform 0.15s ease, box-shadow 0.15s ease',
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.transform = 'scale(1.08)';
-          e.currentTarget.style.boxShadow = '0 6px 28px rgba(2,18,47,0.45)';
+          e.currentTarget.style.boxShadow = '0 8px 32px rgba(0,4,53,0.65), 0 0 0 4px rgba(75,46,10,0.3)';
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.transform = 'scale(1)';
-          e.currentTarget.style.boxShadow = '0 4px 20px rgba(2,18,47,0.35)';
+          e.currentTarget.style.boxShadow = '0 4px 24px rgba(0,4,53,0.55), 0 0 0 0 rgba(75,46,10,0.4)';
         }}
       >
-        {/* Chat icon */}
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path
-            d="M20 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4l4 4 4-4h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Z"
-            fill="#F0ECDD"
-          />
-          <circle cx="8" cy="10" r="1.2" fill="#02122f" />
-          <circle cx="12" cy="10" r="1.2" fill="#02122f" />
-          <circle cx="16" cy="10" r="1.2" fill="#02122f" />
-        </svg>
+        <img
+          src="/creamy-keel-icon.png"
+          alt="Keel"
+          width={52}
+          height={52}
+          style={{ objectFit: 'contain', display: 'block', borderRadius: '50%' }}
+          onError={(e) => {
+            const btn = (e.target as HTMLImageElement).parentElement as HTMLButtonElement;
+            (e.target as HTMLImageElement).style.display = 'none';
+            btn.innerHTML = '<span style="color:#F0ECDD;font-family:Fraunces,Georgia,serif;font-size:24px;font-weight:700">K</span>';
+          }}
+        />
       </button>
 
-      {/* Widget drawer / iframe overlay */}
-      {open && (
+      {/* Widget drawer — always mounted once opened so iframe state persists */}
+      {mounted && (
         <div
           style={{
             position: 'fixed',
-            bottom: '96px',
-            right: '28px',
-            width: '400px',
-            height: '640px',
-            maxWidth: 'calc(100vw - 40px)',
-            maxHeight: 'calc(100vh - 120px)',
-            background: '#02122f',
+            bottom: expanded ? '20px' : '96px',
+            right: expanded ? '20px' : '28px',
+            width: expanded ? 'min(85vw, 1000px)' : '480px',
+            height: expanded ? 'calc(90vh - 20px)' : '680px',
+            maxWidth: expanded ? 'calc(100vw - 40px)' : 'calc(100vw - 40px)',
+            maxHeight: expanded ? 'calc(100vh - 40px)' : 'calc(100vh - 120px)',
+            background: '#000435',
             borderRadius: '16px',
-            boxShadow: '0 16px 56px rgba(2,18,47,0.55)',
+            boxShadow: '0 16px 56px rgba(0,4,53,0.55)',
             zIndex: 950,
-            display: 'flex',
+            display: open ? 'flex' : 'none',
             flexDirection: 'column',
             overflow: 'hidden',
+            transition: 'width 0.25s ease, height 0.25s ease, bottom 0.25s ease, right 0.25s ease',
           }}
         >
           {/* Header bar */}
@@ -173,6 +186,31 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
             >
               Keel Advisor
             </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              {/* Expand / restore toggle */}
+              <button
+                onClick={() => setExpanded(e => !e)}
+                aria-label={expanded ? 'Restore size' : 'Expand advisor'}
+                title={expanded ? 'Restore' : 'Expand'}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: '#8BA3C5',
+                  fontSize: '14px',
+                  lineHeight: 1,
+                  padding: '4px 6px',
+                  borderRadius: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {expanded
+                  ? /* collapse icon ⊡ */ <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"/></svg>
+                  : /* expand icon ⊞ */ <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>
+                }
+              </button>
             <button
               onClick={handleClose}
               aria-label="Close advisor"
@@ -188,6 +226,7 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
             >
               ×
             </button>
+            </div>
           </div>
 
           {/* Loading / error states */}
@@ -228,7 +267,7 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
                 onClick={() => { setError(null); setLoading(true); }}
                 style={{
                   background: '#F0ECDD',
-                  color: '#02122f',
+                  color: '#000435',
                   border: 'none',
                   borderRadius: '6px',
                   padding: '6px 16px',

@@ -5,17 +5,20 @@
     "ui",
     "widget",
     "admin",
-    "portal"
+    "portal",
+    "platform"
   ],
   "scripts": {
-    "build": "npm run build --workspace=ui && npm run build --workspace=widget && npm run build --workspace=admin && npm run build --workspace=portal",
+    "build": "npm run build --workspace=ui && npm run build --workspace=widget && npm run build --workspace=admin && npm run build --workspace=portal && npm run build --workspace=platform",
     "build:ui": "npm run build --workspace=ui",
     "build:widget": "npm run build --workspace=widget",
     "build:admin": "npm run build --workspace=admin",
     "build:portal": "npm run build --workspace=portal",
+    "build:platform": "npm run build --workspace=platform",
     "dev:widget": "npm run dev --workspace=widget",
     "dev:admin": "npm run dev --workspace=admin",
-    "dev:portal": "npm run dev --workspace=portal"
+    "dev:portal": "npm run dev --workspace=portal",
+    "dev:platform": "npm run dev --workspace=platform"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

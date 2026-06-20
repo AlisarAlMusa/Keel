@@ -4,6 +4,7 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 const path = require('path');
 const pool = require('./db.cjs');
 
@@ -19,6 +20,8 @@ const PORT = process.env.PORT || 3000;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-session-secret';
 const KEEL_API_URL = process.env.KEEL_API_URL || 'http://api:8000';
 const PORTAL_SERVICE_SECRET = process.env.PORTAL_SERVICE_SECRET || 'dev-service-secret';
+// PORTAL_TENANT: slug of the tenant this portal instance is bound to (spec §S9, §P11)
+const PORTAL_TENANT = process.env.PORTAL_TENANT || 'northane';
 const SESSION_COOKIE = 'keel_session';
 const SESSION_TTL_SECONDS = 8 * 60 * 60; // 8 hours
 
@@ -98,29 +101,46 @@ async function withTenantTx(client, tenantId, fn) {
   }
 }
 
+// ── Tenant suspension check ───────────────────────────────────────────────────
+// Checks the Keel tenants table (no RLS on tenants).
+// Returns true if the tenant is active; false if suspended/missing.
+
+async function isTenantActive(tenantSlug) {
+  let client;
+  try {
+    client = await pool.connect();
+    const result = await client.query(
+      "SELECT status FROM tenants WHERE slug = $1",
+      [tenantSlug]
+    );
+    if (result.rows.length === 0) return false;
+    return result.rows[0].status === 'active';
+  } catch (err) {
+    console.error('[suspend_check] DB error:', err.message);
+    return false; // fail-closed
+  } finally {
+    if (client) client.release();
+  }
+}
+
 // ── Health ────────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, portal_tenant: PORTAL_TENANT });
 });
 
-// ── Student discovery (SSO stand-in: switcher populates from live DB) ─────────
+// ── Student discovery — legacy switcher (kept for backward compat in dev) ─────
+// In production the switcher is removed; only email+password login is available.
+// This endpoint is still useful for development/testing.
 
-// GET /api/portal/students — returns all students across tenants for the
-// demo switcher. Uses the SECURITY DEFINER approach via a direct superuser
-// connection is NOT available here; we read students without RLS by relying
-// on portal_find_student for login but for discovery we use a simple query
-// that works because keel_app owns the students table.
-// Note: real SSO would supply the student identity — no endpoint like this
-// would exist in production.
-// portal_list_students() is a SECURITY DEFINER function (postgres-owned)
-// that bypasses RLS to return all students for the demo switcher.
 app.get('/api/portal/students', async (_req, res) => {
   let client;
   try {
     client = await pool.connect();
     const result = await client.query('SELECT * FROM portal_list_students()');
-    res.json({ students: result.rows });
+    // Filter to this portal's tenant
+    const tenantStudents = result.rows.filter(s => s.tenant_slug === PORTAL_TENANT);
+    res.json({ students: tenantStudents });
   } catch (err) {
     console.error('[students] error:', err.message);
     res.status(500).json({ error: 'Database error', detail: err.message });
@@ -131,38 +151,73 @@ app.get('/api/portal/students', async (_req, res) => {
 
 // ── Auth endpoints ────────────────────────────────────────────────────────────
 
-// POST /api/portal/login
-// portal_find_student() is a SECURITY DEFINER function owned by the postgres
-// superuser — it bypasses RLS so the portal can resolve tenant_id before the
-// session exists. keel_app cannot bypass RLS directly (NOBYPASSRLS). (D-P5-001)
+// POST /api/portal/login — real email + password (spec §S8)
+//
+// 1. Look up portal_user by unique email (SECURITY DEFINER — pre-tenant bootstrap)
+// 2. Verify bcrypt password (generic 401 on failure — no user enumeration)
+// 3. Assert record.tenant_id == this portal instance's tenant (403 if wrong portal)
+// 4. No suspend check here — portal login is a SIS surface; students still log in
+//    even when Keel is suspended (spec §S8 + §S11 acceptance criteria)
+// 5. Set signed http-only session cookie {student_id, tenant_id, role}
+
 app.post('/api/portal/login', async (req, res) => {
-  const { student_id, role } = req.body;
-  if (!student_id) return res.status(400).json({ error: 'student_id required' });
-
-  const effectiveRole = role === 'registrar' ? 'registrar' : 'student';
-
-  let tenantId;
-  try {
-    const client = await pool.connect();
-    try {
-      const result = await client.query(
-        'SELECT out_student_id, out_tenant_id FROM portal_find_student($1::uuid)',
-        [student_id]
-      );
-      if (result.rows.length === 0) {
-        return res.status(404).json({ error: 'Student not found' });
-      }
-      tenantId = result.rows[0].out_tenant_id;
-    } finally {
-      client.release();
-    }
-  } catch (err) {
-    console.error('[login] DB error:', err.message);
-    return res.status(500).json({ error: 'Database error' });
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'email and password required' });
   }
 
-  setSessionCookie(res, { student_id, tenant_id: tenantId, role: effectiveRole });
-  res.json({ ok: true, role: effectiveRole });
+  let client;
+  try {
+    client = await pool.connect();
+    // portal_find_by_email is a SECURITY DEFINER function — bypasses RLS for
+    // the pre-session lookup (keel_app is NOBYPASSRLS).
+    const result = await client.query(
+      'SELECT user_id, tenant_id, role, hashed_password, student_id FROM portal_find_by_email($1)',
+      [email]
+    );
+
+    // Generic 401 for any auth failure — never leak "email not found"
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const user = result.rows[0];
+
+    const pwValid = await bcrypt.compare(password, user.hashed_password);
+    if (!pwValid) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Resolve this portal's tenant_id from PORTAL_TENANT slug
+    const tenantRow = await client.query(
+      "SELECT id, slug FROM tenants WHERE slug = $1",
+      [PORTAL_TENANT]
+    );
+    if (tenantRow.rows.length === 0) {
+      console.error('[login] PORTAL_TENANT not found in DB:', PORTAL_TENANT);
+      return res.status(500).json({ error: 'Portal misconfigured' });
+    }
+    const portalTenantId = tenantRow.rows[0].id;
+
+    // Tenant-match: ensure this account belongs to this portal instance (spec §S8 step 3)
+    if (String(user.tenant_id) !== String(portalTenantId)) {
+      console.warn('[login] cross-portal attempt', { email, expected: portalTenantId, got: user.tenant_id });
+      return res.status(403).json({ error: 'This account does not belong to this portal' });
+    }
+
+    // Set session — student_id is from the portal_user's student link (or null for registrar)
+    setSessionCookie(res, {
+      student_id: user.student_id || user.user_id,  // fallback to user_id for registrar
+      tenant_id: user.tenant_id,
+      role: user.role,
+    });
+    res.json({ ok: true, role: user.role });
+  } catch (err) {
+    console.error('[login] error:', err.message);
+    res.status(500).json({ error: 'Database error' });
+  } finally {
+    if (client) client.release();
+  }
 });
 
 // POST /api/portal/logout
@@ -172,10 +227,23 @@ app.post('/api/portal/logout', (_req, res) => {
 });
 
 // GET /api/portal/keel-token
+// Unchanged contract (spec §S8): reads {student_id, tenant_id} from session.
+// Adds suspend gate: if tenant is suspended → 403 (widget goes dark).
+// /portal/login does NOT do the suspend check — SIS stays up even when Keel is suspended.
 app.get('/api/portal/keel-token', requireAuth, async (req, res) => {
   const { student_id, tenant_id } = req.session;
+
+  // Suspend gate — Keel goes dark, SIS portal stays up (spec §S1, §S8)
+  const active = await isTenantActive(PORTAL_TENANT);
+  if (!active) {
+    return res.status(403).json({
+      error: 'Advising assistant unavailable for your institution',
+      code: 'TENANT_SUSPENDED',
+    });
+  }
+
   try {
-    // Wait for fetch to be ready (it's loaded asynchronously at startup)
+    // Wait for fetch to be ready (loaded asynchronously at startup)
     let attempts = 0;
     while (!fetch && attempts < 20) {
       await new Promise((r) => setTimeout(r, 50));
@@ -199,7 +267,7 @@ app.get('/api/portal/keel-token', requireAuth, async (req, res) => {
     }
 
     const data = await keelRes.json();
-    res.json(data); // { token, expires_in }
+    res.json(data); // { token, expires_in, persona_name }
   } catch (err) {
     console.error('[keel-token] error:', err);
     res.status(500).json({ error: 'Internal error minting token' });
@@ -217,8 +285,10 @@ app.get('/api/portal/schedule', requireAuth, async (req, res) => {
       c.query(
         `SELECT
            e.id, e.student_id, e.status, e.source,
-           s.id AS section_id, s.term, s.year, s.slots,
-           s.course_code, c.name AS course_name, c.credits
+           s.id AS section_id,
+           ROW_NUMBER() OVER (PARTITION BY s.course_code ORDER BY s.id) AS section_num,
+           s.term, s.year, s.slots,
+           s.course_code, c.name AS course_title, c.credits
          FROM enrollments e
          JOIN sections s ON e.section_id = s.id
          JOIN courses c ON c.code = s.course_code AND c.tenant_id = s.tenant_id
@@ -227,7 +297,35 @@ app.get('/api/portal/schedule', requireAuth, async (req, res) => {
         [student_id, tenant_id]
       )
     );
-    res.json({ enrollments: result.rows });
+
+    // Transform slots JSONB → human-readable days/start_time/end_time
+    const DAY_MAP = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+    const fmtMin = (m) => {
+      const h = Math.floor(m / 60);
+      const min = m % 60;
+      const ampm = h < 12 ? 'AM' : 'PM';
+      const h12 = h % 12 || 12;
+      return `${h12}:${String(min).padStart(2, '0')} ${ampm}`;
+    };
+
+    const enrollments = result.rows.map((row) => {
+      const slots = Array.isArray(row.slots) ? row.slots : [];
+      const days = [...new Set(slots.map((s) => DAY_MAP[s.day] || s.day))].join('/');
+      const starts = slots.map((s) => s.start_min);
+      const ends = slots.map((s) => s.end_min);
+      const start_time = starts.length ? fmtMin(Math.min(...starts)) : null;
+      const end_time = ends.length ? fmtMin(Math.max(...ends)) : null;
+      return {
+        ...row,
+        section_num: Number(row.section_num),
+        days: days || null,
+        start_time,
+        end_time,
+        slots: undefined, // don't expose raw JSONB
+      };
+    });
+
+    res.json({ enrollments });
   } catch (err) {
     console.error('[schedule] error:', err);
     res.status(500).json({ error: 'Database error fetching schedule' });
@@ -243,7 +341,7 @@ app.get('/api/portal/requests', requireAuth, async (req, res) => {
   try {
     const result = await withTenantTx(client, tenant_id, (c) =>
       c.query(
-        `SELECT id, student_id, type, status, payload, note, created_at, updated_at
+        `SELECT id, student_id, type, status, payload, created_at, resolved_at, target
          FROM request_queue
          WHERE student_id = $1 AND tenant_id = $2
          ORDER BY created_at DESC`,
@@ -266,7 +364,7 @@ app.get('/api/portal/activity', requireAuth, async (req, res) => {
   try {
     const result = await withTenantTx(client, tenant_id, (c) =>
       c.query(
-        `SELECT id, actor, action, before_state, after_state, created_at
+        `SELECT id, actor, action, before, after, created_at
          FROM audit_log
          WHERE tenant_id = $1
          ORDER BY created_at DESC LIMIT 20`,
@@ -292,10 +390,14 @@ app.get('/api/portal/registrar/requests', requireRegistrar, async (req, res) => 
   try {
     const result = await withTenantTx(client, tenant_id, (c) =>
       c.query(
-        `SELECT id, student_id, type, status, payload, note, created_at, updated_at
-         FROM request_queue
-         WHERE tenant_id = $1 AND status = $2
-         ORDER BY created_at ASC`,
+        `SELECT rq.id, rq.student_id, rq.type, rq.status, rq.payload,
+                rq.created_at, rq.resolved_at, rq.target,
+                u.display_name AS student_name, u.email AS student_email
+         FROM request_queue rq
+         JOIN students s ON s.id = rq.student_id AND s.tenant_id = rq.tenant_id
+         JOIN users u ON u.id = s.user_id
+         WHERE rq.tenant_id = $1 AND rq.status = $2
+         ORDER BY rq.created_at ASC`,
         [tenant_id, status]
       )
     );
@@ -334,9 +436,9 @@ app.post('/api/portal/registrar/requests/:id/decision', requireRegistrar, async 
       const requestRow = fetchResult.rows[0];
 
       await c.query(
-        `UPDATE request_queue SET status = $1, note = $2, updated_at = NOW()
-         WHERE id = $3 AND tenant_id = $4`,
-        [newStatus, note || null, id, tenant_id]
+        `UPDATE request_queue SET status = $1, resolved_at = NOW()
+         WHERE id = $2 AND tenant_id = $3`,
+        [newStatus, id, tenant_id]
       );
       await c.query(
         `INSERT INTO outbox (tenant_id, event_type, payload, created_at) VALUES ($1, $2, $3, NOW())`,
@@ -347,7 +449,7 @@ app.post('/api/portal/registrar/requests/:id/decision', requireRegistrar, async 
         ]
       );
       await c.query(
-        `INSERT INTO audit_log (tenant_id, actor, action, before_state, after_state, created_at)
+        `INSERT INTO audit_log (tenant_id, actor, action, before, after, created_at)
          VALUES ($1, $2, $3, $4, $5, NOW())`,
         [
           tenant_id,
@@ -375,7 +477,8 @@ app.get('/api/portal/registrar/catalog', requireRegistrar, async (req, res) => {
   try {
     const result = await withTenantTx(client, tenant_id, (c) =>
       c.query(
-        `SELECT id, code, name, credits, difficulty, description
+        `SELECT id, code, name AS title, credits, description,
+                NULL::text AS department
          FROM courses WHERE tenant_id = $1 ORDER BY code`,
         [tenant_id]
       )
@@ -396,7 +499,8 @@ app.get('/api/portal/registrar/sections', requireRegistrar, async (req, res) => 
   try {
     const result = await withTenantTx(client, tenant_id, (c) =>
       c.query(
-        `SELECT s.id, s.course_code, c.name AS course_name,
+        `SELECT s.id, s.course_code, c.name AS course_title,
+                ROW_NUMBER() OVER (PARTITION BY s.course_code ORDER BY s.id) AS section_num,
                 s.term, s.year, s.slots, s.capacity, s.enrolled
          FROM sections s
          JOIN courses c ON c.code = s.course_code AND c.tenant_id = s.tenant_id
@@ -405,7 +509,34 @@ app.get('/api/portal/registrar/sections', requireRegistrar, async (req, res) => 
         [tenant_id]
       )
     );
-    res.json({ sections: result.rows });
+
+    const DAY_MAP2 = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+    const fmtMin2 = (m) => {
+      const h = Math.floor(m / 60), min = m % 60;
+      const h12 = h % 12 || 12, ampm = h < 12 ? 'AM' : 'PM';
+      return `${h12}:${String(min).padStart(2,'0')} ${ampm}`;
+    };
+
+    const sections = result.rows.map((row) => {
+      const slots = Array.isArray(row.slots) ? row.slots : [];
+      const days = [...new Set(slots.map((s) => DAY_MAP2[s.day] || s.day))].join('/');
+      const starts = slots.map((s) => s.start_min), ends = slots.map((s) => s.end_min);
+      return {
+        id: row.id,
+        course_code: row.course_code,
+        course_title: row.course_title,
+        section_num: Number(row.section_num),
+        term: row.term,
+        year: row.year,
+        days: days || null,
+        start_time: starts.length ? fmtMin2(Math.min(...starts)) : null,
+        end_time: ends.length ? fmtMin2(Math.max(...ends)) : null,
+        instructor: null,
+        capacity: row.capacity,
+        enrolled: row.enrolled,
+      };
+    });
+    res.json({ sections });
   } catch (err) {
     console.error('[registrar/sections] error:', err);
     res.status(500).json({ error: 'Database error fetching sections' });
@@ -475,5 +606,5 @@ if (process.env.NODE_ENV === 'production') {
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`[portal] listening on :${PORT}`);
+  console.log(`[portal:${PORTAL_TENANT}] listening on :${PORT}`);
 });

@@ -67,11 +67,48 @@ function ThinkingDots() {
             width: '7px',
             height: '7px',
             borderRadius: '50%',
-            background: 'var(--accent)',
+            background: 'var(--mahogany)',
             animation: `thinking-bounce 1.2s ease-in-out ${i * 0.2}s infinite`,
           }}
         />
       ))}
+    </div>
+  );
+}
+
+function KeelAvatar() {
+  return (
+    <div
+      style={{
+        width: '32px',
+        height: '32px',
+        borderRadius: '50% 50% 50% 6px',
+        background: 'var(--oxford)',
+        border: '1.5px solid var(--mahogany)',
+        flexShrink: 0,
+        overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <img
+        src="/static/creamy-keel-icon.png"
+        alt=""
+        aria-hidden
+        width={32}
+        height={32}
+        style={{ objectFit: 'contain', borderRadius: '50%' }}
+        onError={(e) => {
+          const el = e.target as HTMLImageElement;
+          el.style.display = 'none';
+          (el.parentElement as HTMLDivElement).textContent = 'K';
+          (el.parentElement as HTMLDivElement).style.color = 'var(--moonlight)';
+          (el.parentElement as HTMLDivElement).style.fontSize = '13px';
+          (el.parentElement as HTMLDivElement).style.fontFamily = 'Fraunces, Georgia, serif';
+          (el.parentElement as HTMLDivElement).style.fontWeight = '700';
+        }}
+      />
     </div>
   );
 }
@@ -156,7 +193,7 @@ function PlanCard({ plan, onApprove, actionId, approvalPending }: PlanCardProps)
               justifyContent: 'space-between',
               gap: 'var(--sp-2)',
               padding: '6px var(--sp-3)',
-              background: 'rgba(2, 18, 47, 0.35)',
+              background: 'rgba(0, 4, 53, 0.35)',
               borderRadius: 'var(--radius-sm)',
             }}
           >
@@ -281,30 +318,43 @@ function MessageBubble({ msg, isLatest, onApprove, approvalPending }: BubbleProp
         flexDirection: 'column',
         alignItems: isStudent ? 'flex-end' : 'flex-start',
         gap: 'var(--sp-1)',
-        padding: '0 var(--sp-4)',
+        padding: '0 var(--sp-3)',
       }}
     >
+      {/* Avatar + bubble row for keel messages */}
       <div
         style={{
-          maxWidth: '85%',
-          background: isStudent ? 'var(--steel)' : 'var(--storm)',
-          border: isStudent ? 'none' : '1px solid var(--border)',
-          borderRadius: isStudent
-            ? '12px 12px 2px 12px'
-            : '2px 12px 12px 12px',
-          padding: 'var(--sp-2) var(--sp-3)',
-          color: 'var(--moonlight)',
-          fontSize: 'var(--text-sm)',
-          lineHeight: 1.55,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 'var(--sp-2)',
+          flexDirection: isStudent ? 'row-reverse' : 'row',
+          width: '100%',
         }}
       >
-        {msg.role === 'keel' ? (
-          <StreamingText text={msg.text} isStreaming={false} />
-        ) : (
-          <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {msg.text}
-          </span>
-        )}
+        {!isStudent && <KeelAvatar />}
+        <div
+          style={{
+            maxWidth: '80%',
+            background: isStudent ? 'var(--steel)' : 'var(--moonlight)',
+            border: 'none',
+            borderRadius: isStudent
+              ? '12px 12px 2px 12px'
+              : '2px 12px 12px 12px',
+            padding: 'var(--sp-2) var(--sp-3)',
+            color: isStudent ? 'var(--moonlight)' : 'var(--oxford)',
+            fontSize: 'var(--text-sm)',
+            lineHeight: 1.55,
+            boxShadow: isStudent ? 'none' : '0 2px 12px rgba(0,4,53,0.18)',
+          }}
+        >
+          {msg.role === 'keel' ? (
+            <StreamingText text={msg.text} isStreaming={false} />
+          ) : (
+            <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {msg.text}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Plan card(s) attached to this message */}
@@ -465,7 +515,7 @@ export function ChatWidget({ token, personaName = 'Keel Advisor' }: ChatWidgetPr
       const keelMsg: ChatMessage = {
         id: generateId(),
         role: 'keel',
-        text: res.text,
+        text: res.response,
         plans: plans.length > 0 ? plans : undefined,
         actionId: res.action_id,
         pendingApproval: res.pending_approval,
@@ -556,17 +606,18 @@ export function ChatWidget({ token, personaName = 'Keel Advisor' }: ChatWidgetPr
           alignItems: 'center',
           gap: 'var(--sp-3)',
           padding: 'var(--sp-3) var(--sp-4)',
-          background: 'var(--storm)',
-          borderBottom: '1px solid var(--border)',
+          background: 'var(--mahogany)',
+          borderBottom: '1px solid rgba(0,0,0,0.2)',
         }}
       >
         {/* Icon */}
         <div
           style={{
-            width: '28px',
-            height: '28px',
-            borderRadius: '50%',
-            background: 'var(--steel)',
+            width: '32px',
+            height: '32px',
+            borderRadius: '50% 50% 50% 6px',
+            background: 'var(--oxford)',
+            border: '1.5px solid var(--mahogany)',
             flexShrink: 0,
             overflow: 'hidden',
             display: 'flex',
@@ -575,13 +626,12 @@ export function ChatWidget({ token, personaName = 'Keel Advisor' }: ChatWidgetPr
           }}
         >
           <img
-            src="/static/keel-icon.png"
+            src="/static/creamy-keel-icon.png"
             alt="Keel"
             width={28}
             height={28}
-            style={{ objectFit: 'cover', borderRadius: '50%' }}
+            style={{ objectFit: 'contain', borderRadius: '50%' }}
             onError={(e) => {
-              // Fallback to a simple letter if icon not available
               (e.target as HTMLImageElement).style.display = 'none';
             }}
           />
@@ -689,18 +739,29 @@ export function ChatWidget({ token, personaName = 'Keel Advisor' }: ChatWidgetPr
           >
             <div
               style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '50%',
-                background: 'var(--storm)',
-                border: '1px solid var(--border)',
+                width: '56px',
+                height: '56px',
+                borderRadius: '50% 50% 50% 10px',
+                background: 'var(--oxford)',
+                border: '2px solid var(--mahogany)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '22px',
+                overflow: 'hidden',
               }}
             >
-              ⚓
+              <img
+                src="/static/creamy-keel-icon.png"
+                alt=""
+                aria-hidden
+                width={52}
+                height={52}
+                style={{ objectFit: 'contain' }}
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                  ((e.target as HTMLImageElement).parentElement as HTMLDivElement).textContent = 'K';
+                }}
+              />
             </div>
             <div>
               <div
@@ -732,14 +793,15 @@ export function ChatWidget({ token, personaName = 'Keel Advisor' }: ChatWidgetPr
         ))}
 
         {thinking && (
-          <div style={{ padding: '0 var(--sp-4)' }}>
+          <div style={{ padding: '0 var(--sp-3)', display: 'flex', alignItems: 'flex-start', gap: 'var(--sp-2)' }}>
+            <KeelAvatar />
             <div
               style={{
                 display: 'inline-flex',
-                background: 'var(--storm)',
-                border: '1px solid var(--border)',
+                background: 'var(--moonlight)',
                 borderRadius: '2px 12px 12px 12px',
                 padding: 'var(--sp-2) var(--sp-3)',
+                boxShadow: '0 2px 12px rgba(0,4,53,0.18)',
               }}
             >
               <ThinkingDots />
@@ -832,11 +894,11 @@ export function ChatWidget({ token, personaName = 'Keel Advisor' }: ChatWidgetPr
             background:
               composerDisabled || !draft.trim()
                 ? 'var(--steel)'
-                : 'var(--moonlight)',
+                : 'var(--mahogany)',
             color:
               composerDisabled || !draft.trim()
                 ? 'var(--text-muted)'
-                : 'var(--oxford)',
+                : 'var(--moonlight)',
             cursor:
               composerDisabled || !draft.trim() ? 'not-allowed' : 'pointer',
             display: 'flex',

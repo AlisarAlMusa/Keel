@@ -81,19 +81,28 @@ export function RequestQueue() {
     return <div style={{ color: '#c0392b', fontSize: '0.875rem' }}>Error: {error}</div>;
   }
 
-  const headers = ['Student ID', 'Type', 'Details', 'Submitted', 'Actions'];
+  const headers = ['Student', 'Type', 'Details', 'Submitted', 'Actions'];
 
   const rows = requests.map((r) => {
     const details =
       r.payload && typeof r.payload === 'object'
         ? Object.entries(r.payload)
+            .filter(([k]) => k !== 'drafted_by')
             .slice(0, 3)
             .map(([k, v]) => `${k}: ${v}`)
-            .join(', ')
+            .join(' · ')
         : '—';
+    const studentLabel = (r as RequestItem & { student_name?: string; student_email?: string }).student_name
+      ?? (r as RequestItem & { student_email?: string }).student_email
+      ?? r.student_id.slice(0, 8) + '…';
 
     return [
-      <span style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{r.student_id}</span>,
+      <div>
+        <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{studentLabel}</div>
+        <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          {r.student_id.slice(0, 8)}…
+        </div>
+      </div>,
       <span style={{ fontWeight: 500, textTransform: 'capitalize' }}>{r.type.replace(/_/g, ' ')}</span>,
       <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', maxWidth: '200px', display: 'block' }}>
         {details}

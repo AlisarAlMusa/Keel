@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+import bcrypt
 import cohere
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,7 @@ from keel.infra.database.models import (
     Advisor,
     Corequisite,
     Course,
+    PortalUser,
     Prerequisite,
     Program,
     ProgramRequirement,
@@ -42,6 +44,7 @@ from keel.infra.database.models import (
     StudentTranscript,
     Tenant,
     User,
+    WidgetConfig,
 )
 from keel.logging import configure_logging, get_logger
 from keel.services.ingestion import ingest_file
@@ -997,6 +1000,187 @@ async def _ingest_corpus(
 
 
 # ---------------------------------------------------------------------------
+# Portal users — 3 students + 1 registrar per tenant (spec §S10)
+# email maps to the student in _STUDENTS above
+# ---------------------------------------------------------------------------
+
+_PORTAL_USERS: dict[str, list[dict[str, Any]]] = {
+    "northane": [
+        # Students — email matches the demo student identity
+        {"email": "alisar@northane.edu", "role": "student", "student_email": "alex.morgan@northane.edu"},
+        {"email": "omar@northane.edu", "role": "student", "student_email": "jordan.lee@northane.edu"},
+        {"email": "lina@northane.edu", "role": "student", "student_email": "riley.chen@northane.edu"},
+        # Registrar
+        {"email": "registrar@northane.edu", "role": "registrar", "student_email": None},
+    ],
+    "summit": [
+        {"email": "maya@summit.edu", "role": "student", "student_email": "taylor.brooks@summit.edu"},
+        {"email": "jad@summit.edu", "role": "student", "student_email": "morgan.patel@summit.edu"},
+        {"email": "sara@summit.edu", "role": "student", "student_email": "casey.wu@summit.edu"},
+        {"email": "registrar@summit.edu", "role": "registrar", "student_email": None},
+    ],
+}
+
+# Admin accounts — one per demo tenant (role tenant_admin)
+_TENANT_ADMINS: dict[str, str] = {
+    "northane": "admin@northane.edu",
+    "summit": "admin@summit.edu",
+}
+
+# Platform operator (role platform_operator, tenant_id IS NULL)
+_OPERATOR_EMAIL = "operator@keel.platform"
+
+# Portal origins that each tenant's widget_config must allow (spec §S10)
+_PORTAL_ORIGINS: dict[str, str] = {
+    "northane": "http://localhost:3001",
+    "summit": "http://localhost:3002",
+}
+
+
+def _hash_pw(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+async def _seed_auth_accounts(
+    session_factory: Any,
+    tenant_ids: dict[str, UUID],
+    student_ids_by_email: dict[str, UUID],
+    operator_password: str,
+    admin_password: str,
+    portal_password: str,
+) -> None:
+    """Idempotent upsert of operator, tenant_admins, and portal_users.
+
+    Runs outside tenant RLS (no SET LOCAL app.tenant_id needed for users/platform_audit).
+    """
+    # --- Platform operator (tenant_id IS NULL) ---
+    # Use keel_find_user_by_email() (SECURITY DEFINER) so the check bypasses RLS —
+    # without app.tenant_id set, a direct SELECT on users fails with uuid cast error.
+    async with session_factory() as session:
+        async with session.begin():
+            row = await session.execute(
+                text("SELECT user_id FROM keel_find_user_by_email(:e)"),
+                {"e": _OPERATOR_EMAIL},
+            )
+            existing_op = row.fetchone()
+            if not existing_op:
+                session.add(
+                    User(
+                        id=uuid4(),
+                        tenant_id=None,
+                        email=_OPERATOR_EMAIL,
+                        role="platform_operator",
+                        display_name="Keel Platform Operator",
+                        hashed_password=_hash_pw(operator_password),
+                    )
+                )
+                log.info("seed_operator_created", email=_OPERATOR_EMAIL)
+            else:
+                log.info("seed_operator_exists", email=_OPERATOR_EMAIL)
+
+    # --- Tenant admins (one per demo tenant) ---
+    for slug, admin_email in _TENANT_ADMINS.items():
+        tid = tenant_ids[slug]
+        async with session_factory() as session:
+            async with session.begin():
+                # Must set tenant context so RLS allows INSERT and SELECT on users.
+                await session.execute(
+                    text("SELECT set_config('app.tenant_id', :tid, true)"),
+                    {"tid": str(tid)},
+                )
+                row = await session.execute(
+                    text("SELECT user_id FROM keel_find_user_by_email(:e)"),
+                    {"e": admin_email},
+                )
+                existing_admin = row.fetchone()
+                if not existing_admin:
+                    session.add(
+                        User(
+                            id=uuid4(),
+                            tenant_id=tid,
+                            email=admin_email,
+                            role="tenant_admin",
+                            display_name=f"{slug.title()} Admin",
+                            hashed_password=_hash_pw(admin_password),
+                        )
+                    )
+                    log.info("seed_admin_created", email=admin_email, slug=slug)
+                else:
+                    log.info("seed_admin_exists", email=admin_email)
+
+    # --- Portal users (students + registrar per tenant) ---
+    # portal_user table has RLS; set app.tenant_id for each tenant block.
+    for slug, users in _PORTAL_USERS.items():
+        tid = tenant_ids[slug]
+        async with session_factory() as session:
+            async with session.begin():
+                await session.execute(
+                    text("SELECT set_config('app.tenant_id', :tid, true)"),
+                    {"tid": str(tid)},
+                )
+                for pu in users:
+                    existing = await session.scalar(
+                        text("SELECT id FROM portal_user WHERE email = :e"),
+                        {"e": pu["email"]},
+                    )
+                    if existing:
+                        log.info("seed_portal_user_exists", email=pu["email"])
+                        continue
+
+                    # Resolve student_id from the SIS student email
+                    sid: UUID | None = None
+                    if pu["student_email"]:
+                        sid = student_ids_by_email.get(pu["student_email"])
+
+                    session.add(
+                        PortalUser(
+                            id=uuid4(),
+                            tenant_id=tid,
+                            role=pu["role"],
+                            email=pu["email"],
+                            hashed_password=_hash_pw(portal_password),
+                            student_id=sid,
+                        )
+                    )
+                    log.info("seed_portal_user_created", email=pu["email"], role=pu["role"])
+
+    # --- Widget config: ensure allowed_origins includes portal origin ---
+    for slug, origin in _PORTAL_ORIGINS.items():
+        tid = tenant_ids[slug]
+        async with session_factory() as session:
+            async with session.begin():
+                await session.execute(
+                    text("SELECT set_config('app.tenant_id', :tid, true)"),
+                    {"tid": str(tid)},
+                )
+                existing_cfg = await session.scalar(
+                    text("SELECT id FROM widget_config WHERE tenant_id = CAST(:tid AS uuid)"),
+                    {"tid": str(tid)},
+                )
+                if existing_cfg:
+                    # Ensure origin is in allowed_origins
+                    await session.execute(
+                        text(
+                            "UPDATE widget_config "
+                            "SET allowed_origins = (allowed_origins || CAST(:o AS jsonb)) "
+                            "WHERE tenant_id = CAST(:tid AS uuid) "
+                            "  AND NOT (allowed_origins @> CAST(:o AS jsonb))"
+                        ),
+                        {"o": f'["{origin}"]', "tid": str(tid)},
+                    )
+                    log.info("seed_widget_config_origin_added", slug=slug, origin=origin)
+                else:
+                    session.add(
+                        WidgetConfig(
+                            id=uuid4(),
+                            tenant_id=tid,
+                            allowed_origins=[origin],
+                        )
+                    )
+                    log.info("seed_widget_config_created", slug=slug, origin=origin)
+
+
+# ---------------------------------------------------------------------------
 # Secrets resolution
 # ---------------------------------------------------------------------------
 
@@ -1097,6 +1281,27 @@ async def main() -> None:
                     await _seed_tenant(session, tid, t["slug"])
             log.info("seed_tenant_done", slug=t["slug"])
 
+        # Collect student IDs by their user email (for portal_user → student_id links)
+        student_ids_by_email: dict[str, UUID] = {}
+        for t in _TENANTS:
+            tid = tenant_ids[t["slug"]]
+            async with session_factory() as session:
+                async with session.begin():
+                    await session.execute(
+                        text("SELECT set_config('app.tenant_id', :tid, true)"),
+                        {"tid": str(tid)},
+                    )
+                    rows = await session.execute(
+                        text(
+                            "SELECT s.id, u.email FROM students s "
+                            "JOIN users u ON u.id = s.user_id "
+                            "WHERE s.tenant_id = :tid"
+                        ),
+                        {"tid": str(tid)},
+                    )
+                    for student_id, email in rows:
+                        student_ids_by_email[email] = student_id
+
         # Verify counts.
         for t in _TENANTS:
             tid = tenant_ids[t["slug"]]
@@ -1126,6 +1331,19 @@ async def main() -> None:
             )
         else:
             log.warning("minio_creds_unavailable_skipping_upload")
+
+        # Auth accounts: operator, tenant admins, portal users, widget origins.
+        from keel.config import get_settings as _gs
+        _s = _gs()
+        await _seed_auth_accounts(
+            session_factory,
+            tenant_ids,
+            student_ids_by_email,
+            operator_password=_s.keel_operator_password,
+            admin_password=_s.keel_admin_password,
+            portal_password=_s.keel_portal_password,
+        )
+        log.info("seed_auth_accounts_done")
 
         # RAG ingestion (best-effort).
         await _ingest_corpus(

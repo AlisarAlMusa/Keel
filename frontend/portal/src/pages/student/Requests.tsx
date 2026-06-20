@@ -39,7 +39,7 @@ export function Requests() {
     return <div style={{ color: '#c0392b', fontSize: '0.875rem' }}>Error: {error}</div>;
   }
 
-  const headers = ['Type', 'Status', 'Details', 'Note', 'Submitted'];
+  const headers = ['Type', 'Status', 'Details', 'Resolved', 'Submitted'];
 
   const rows = requests.map((r) => {
     const statusVariant =
@@ -60,7 +60,9 @@ export function Requests() {
       <span style={{ fontWeight: 500, textTransform: 'capitalize' }}>{r.type.replace(/_/g, ' ')}</span>,
       <Badge variant={statusVariant} label={r.status.charAt(0).toUpperCase() + r.status.slice(1)} />,
       <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{details}</span>,
-      r.note ?? <span style={{ color: 'var(--text-muted)' }}>—</span>,
+      r.resolved_at
+        ? <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{new Date(r.resolved_at).toLocaleDateString()}</span>
+        : <span style={{ color: 'var(--text-muted)' }}>—</span>,
       <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
         {new Date(r.created_at).toLocaleDateString()}
       </span>,

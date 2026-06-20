@@ -1,22 +1,15 @@
-"""Admin endpoints — registrar-facing Keel configuration + RAG upload.
+"""Admin endpoints — tenant-admin configuration + RAG upload.
 
-Phase 5 additions (spec §3):
-  POST /admin/rag/upload                 — chunk + embed prose docs → pgvector
-  GET  /admin/widget-config              — read per-tenant widget config
-  PUT  /admin/widget-config              — update persona / origins / tools
-  GET  /admin/widget-snippet             — returns <script> embed tag
-  GET  /admin/cost?period=week           — usage_event aggregation
-  GET  /admin/audit?limit=               — read-only audit log
+Auth: Bearer JWT with role=tenant_admin (issued by POST /auth/login).
+      Tenant context is read from the JWT claim — no extra header needed.
 
-Auth: X-Admin-Token header checked against Vault jwt_signing_key (simple
-  shared-secret gate for the capstone; production would use fastapi-users
-  JWT with tenant_admin role).
-
-Tenant context: tenant_id comes from X-Tenant-Id header (admin is already
-  authenticated and knows their tenant).
-
-Safety rails are NOT in widget_config and are never exposed here — they
-  are hardcoded in infra/guardrails.py.
+Routes:
+  POST /admin/rag/upload              — chunk + embed prose docs → pgvector
+  GET  /admin/widget-config           — per-tenant widget config
+  PUT  /admin/widget-config           — update persona / origins / tools
+  GET  /admin/widget-snippet          — <script> embed tag
+  GET  /admin/cost?period=week        — usage_event aggregation
+  GET  /admin/audit?limit=            — read-only audit log
 """
 
 from __future__ import annotations
@@ -24,13 +17,14 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel
 from redis import Redis
 from rq import Queue
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from keel.api.routers.auth_admin import AdminContext, require_role
 from keel.infra import storage as storage_infra
 from keel.infra.database.models import AuditLog, UsageEvent, WidgetConfig
 from keel.logging import get_logger
@@ -41,28 +35,7 @@ _log = get_logger(__name__)
 
 _RQ_QUEUE = "keel"
 
-
-# ---------------------------------------------------------------------------
-# Auth helpers
-# ---------------------------------------------------------------------------
-
-
-def _require_admin(request: Request) -> str:
-    """Return the tenant_id from X-Tenant-Id header; validate X-Admin-Token."""
-    token = request.headers.get("X-Admin-Token", "")
-    expected: str = getattr(request.app.state, "jwt_signing_key", "")
-    if not token or token != expected:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing admin token",
-        )
-    tenant_id = request.headers.get("X-Tenant-Id", "")
-    if not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="X-Tenant-Id header required",
-        )
-    return tenant_id
+_require_admin = Depends(require_role("tenant_admin"))
 
 
 def _get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -72,7 +45,6 @@ def _get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
 async def _scoped_session(
     session_factory: async_sessionmaker[AsyncSession], tenant_id: str
 ) -> AsyncSession:
-    """Not a dependency — use as context manager inside endpoints."""
     session = session_factory()
     await session.execute(
         text("SELECT set_config('app.tenant_id', :tid, true)"),
@@ -82,7 +54,7 @@ async def _scoped_session(
 
 
 # ---------------------------------------------------------------------------
-# RAG upload (existing endpoint, re-pathed and extended)
+# RAG upload
 # ---------------------------------------------------------------------------
 
 
@@ -101,14 +73,12 @@ class DocumentUploadResponse(BaseModel):
 async def upload_rag_document(
     file: UploadFile,
     request: Request,
-    chunk_type: str = "policy",
+    ctx: AdminContext = Depends(require_role("tenant_admin")),
 ) -> DocumentUploadResponse:
-    """Upload a prose markdown doc (catalog.md / policy.md) → chunk → embed.
-
-    Structured rows (courses, sections, prereqs, students) are seed-only.
-    This endpoint is prose-only RAG ingestion.
-    """
-    tenant_id = _require_admin(request)
+    """Upload a prose markdown doc → chunk → embed into pgvector."""
+    tenant_id = ctx.tenant_id
+    if not tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
 
     if not file.filename:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="filename required")
@@ -136,16 +106,15 @@ async def upload_rag_document(
     q = Queue(_RQ_QUEUE, connection=redis_conn)
     job = q.enqueue(
         run_ingest_source,
-        kwargs={"tenant_id_str": tenant_id, "source": source, "chunk_type": chunk_type},
+        kwargs={"tenant_id_str": tenant_id, "source": source, "chunk_type": "policy"},
     )
 
-    # Rough estimate: ~400 chars per chunk
     chunks_est = max(1, len(content_bytes) // 400)
     _log.info("admin.rag_enqueued", tenant_id=tenant_id, source=source, job_id=job.id)
     return DocumentUploadResponse(source=source, job_id=job.id, chunks_estimated=chunks_est)
 
 
-# Keep the old path alive so existing scripts don't break.
+# Keep old path alive so existing scripts don't break.
 @router.post(
     "/tenants/{tenant_id}/documents",
     response_model=DocumentUploadResponse,
@@ -156,12 +125,9 @@ async def upload_document_legacy(
     tenant_id: str,
     file: UploadFile,
     request: Request,
-    chunk_type: str = "policy",
+    ctx: AdminContext = Depends(require_role("tenant_admin")),
 ) -> DocumentUploadResponse:
-    request.headers.__dict__["_list"].append(
-        (b"x-tenant-id", tenant_id.encode())
-    )
-    return await upload_rag_document(file=file, request=request, chunk_type=chunk_type)
+    return await upload_rag_document(file=file, request=request, ctx=ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +152,13 @@ class WidgetConfigResponse(BaseModel):
 
 
 @router.get("/widget-config", response_model=WidgetConfigResponse)
-async def get_widget_config(request: Request) -> WidgetConfigResponse:
-    tenant_id = _require_admin(request)
+async def get_widget_config(
+    request: Request,
+    ctx: AdminContext = Depends(require_role("tenant_admin")),
+) -> WidgetConfigResponse:
+    tenant_id = ctx.tenant_id
+    if not tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
     sf = _get_session_factory(request)
 
     async with sf() as session:
@@ -200,7 +171,6 @@ async def get_widget_config(request: Request) -> WidgetConfigResponse:
         cfg = row.scalar_one_or_none()
 
     if not cfg:
-        # Return defaults if no config row yet
         return WidgetConfigResponse(
             tenant_id=tenant_id,
             persona="You are Keel, a helpful AI academic advisor.",
@@ -222,12 +192,12 @@ async def get_widget_config(request: Request) -> WidgetConfigResponse:
 async def put_widget_config(
     body: WidgetConfigPayload,
     request: Request,
+    ctx: AdminContext = Depends(require_role("tenant_admin")),
 ) -> WidgetConfigResponse:
-    """Upsert per-tenant widget configuration.
-
-    Safety rails are NOT accepted in this payload — they are locked in code.
-    """
-    tenant_id = _require_admin(request)
+    """Upsert per-tenant widget configuration. Safety rails are locked in code."""
+    tenant_id = ctx.tenant_id
+    if not tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
     sf = _get_session_factory(request)
 
     async with sf() as session:
@@ -259,7 +229,6 @@ async def put_widget_config(
                 if body.enabled_tools is not None:
                     cfg.enabled_tools = body.enabled_tools
 
-    # Refresh the origins cache on app.state so origin checks pick up the change
     if not hasattr(request.app.state, "widget_origins_map"):
         request.app.state.widget_origins_map = {}
     request.app.state.widget_origins_map[tenant_id] = list(body.allowed_origins or [])
@@ -285,8 +254,13 @@ class WidgetSnippetResponse(BaseModel):
 
 
 @router.get("/widget-snippet", response_model=WidgetSnippetResponse)
-async def get_widget_snippet(request: Request) -> WidgetSnippetResponse:
-    tenant_id = _require_admin(request)
+async def get_widget_snippet(
+    request: Request,
+    ctx: AdminContext = Depends(require_role("tenant_admin")),
+) -> WidgetSnippetResponse:
+    tenant_id = ctx.tenant_id
+    if not tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
     base_url = str(request.base_url).rstrip("/")
     snippet = (
         f'<script src="{base_url}/widget.js" '
@@ -316,8 +290,14 @@ class CostResponse(BaseModel):
 
 
 @router.get("/cost", response_model=CostResponse)
-async def get_cost(request: Request, period: str = "week") -> CostResponse:
-    tenant_id = _require_admin(request)
+async def get_cost(
+    request: Request,
+    period: str = "week",
+    ctx: AdminContext = Depends(require_role("tenant_admin")),
+) -> CostResponse:
+    tenant_id = ctx.tenant_id
+    if not tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
     sf = _get_session_factory(request)
 
     interval_map = {"day": "1 day", "week": "7 days", "month": "30 days"}
@@ -377,8 +357,14 @@ class AuditResponse(BaseModel):
 
 
 @router.get("/audit", response_model=AuditResponse)
-async def get_audit(request: Request, limit: int = 50) -> AuditResponse:
-    tenant_id = _require_admin(request)
+async def get_audit(
+    request: Request,
+    limit: int = 50,
+    ctx: AdminContext = Depends(require_role("tenant_admin")),
+) -> AuditResponse:
+    tenant_id = ctx.tenant_id
+    if not tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token")
     sf = _get_session_factory(request)
 
     async with sf() as session:
