@@ -237,29 +237,33 @@ async def test_cross_student_approve_returns_403() -> None:
 
     app = FastAPI()
 
+    from keel.api.auth import mint_widget_token
     from keel.api.routers.actions import router as actions_router
 
     app.include_router(actions_router)
     # The router reads session_factory from app.state; provide a stub.
     app.state.session_factory = MagicMock()
     app.state.compiled_agent = None  # no agent needed for this test
+    # Identity now comes from the verified widget JWT (not X-* headers).
+    app.state.widget_token_secret = "test-widget-secret"
+    app.state.widget_origins_map = {}  # empty → dev allow-all origin check
 
     mock_ctx = AsyncMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    # Student A's verified token; the action belongs to Student B.
+    token_a = mint_widget_token("test-widget-secret", tenant_id, student_a_id)
 
     # Patch tenant_session at the local import in the router module.
     fake_action_get = AsyncMock(return_value=action_row)
     with patch("keel.api.routers.actions.tenant_session", return_value=mock_ctx):
         with patch("keel.api.routers.actions.ActionRepo.get", new=fake_action_get):
             client = TestClient(app, raise_server_exceptions=False)
-            # Student A tries to approve Student B's action.
+            # Student A (verified token) tries to approve Student B's action.
             response = client.post(
                 f"/actions/{action_id}/approve",
-                headers={
-                    "X-Student-Id": student_a_id,
-                    "X-Tenant-Id": tenant_id,
-                },
+                headers={"Authorization": f"Bearer {token_a}"},
             )
 
     assert response.status_code == 403, (

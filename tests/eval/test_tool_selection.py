@@ -40,11 +40,11 @@ _GOLDEN: list[dict[str, Any]] = [
     _g("What is the late drop policy?", "rag_search", "tools"),
     _g("Predict my graduation risk if I take 18 credits", "predict_risk", "tools"),
     _g("What would happen if I had already completed MATH201?", "simulate_whatif", "tools"),
-    # Plan CRUD (read-only tools)
+    # Graduation plan management (student-owned metadata)
     _g("Propose a course plan for Fall 2025", "propose_plan", "tools"),
-    _g("Save this plan for Fall 2025", "save_plan", "tools"),
-    _g("Show me my saved plans", "load_plan", "tools"),
-    _g("Swap CS201 for CS301 in my plan", "swap_course", "tools"),
+    _g("Show me my saved graduation plan", "load_grad_plan", "tools"),
+    _g("Swap CS201 for CS301 in my graduation plan", "swap_grad_plan_course", "tools"),
+    _g("Delete my saved graduation plan", "delete_grad_plan", "tools"),
     # Write actions (enrollment / waitlist) → must route to "stage"
     _g("Enroll me in section 12345", "stage_enrollment", "stage"),
     _g("Register me for CS401 section A", "stage_enrollment", "stage"),
@@ -80,10 +80,12 @@ _ALL_TOOL_NAMES = {
     "gpa_estimate",
     "simulate_whatif",
     "propose_plan",
-    "save_plan",
-    "load_plan",
-    "activate_plan",
-    "swap_course",
+    "plan_graduation",
+    "propose_sections",
+    "load_grad_plan",
+    "delete_grad_plan",
+    "swap_grad_plan_course",
+    "list_full_sections",
     "stage_enrollment",
     "stage_waitlist_join",
     "stage_waitlist_leave",
@@ -129,9 +131,15 @@ def test_stage_tool_names_are_complete() -> None:
 
 
 def test_all_planning_tools_route_to_tools_node() -> None:
-    """Plan CRUD tools are read-only (no outbox, no approval gate) — must route
-    to 'tools' node, never 'stage'."""
-    plan_tools = {"propose_plan", "save_plan", "load_plan", "activate_plan", "swap_course"}
+    """Planning and graduation-plan metadata tools do not use the approval gate."""
+    plan_tools = {
+        "propose_plan",
+        "plan_graduation",
+        "propose_sections",
+        "load_grad_plan",
+        "delete_grad_plan",
+        "swap_grad_plan_course",
+    }
     for t in plan_tools:
         node = _simulate_routing(t)
         assert node == "tools", f"{t} routed to {node!r}, expected 'tools'"
