@@ -180,6 +180,40 @@ _COURSES: list[dict[str, Any]] = [
         "terms": ["fall"],
         "desc": "Threats, cryptography, secure design.",
     },
+    # AI track — accessible electives so an "AI engineer" goal has a real, takeable path.
+    # Low common prereqs (CS102) keep CS360/CS362/CS366 open to CS and DS students alike.
+    {
+        "code": "CS360",
+        "name": "Introduction to Artificial Intelligence",
+        "credits": 3,
+        "difficulty": 3,
+        "terms": ["fall", "spring"],
+        "desc": "Search, knowledge, and intelligent agents.",
+    },
+    {
+        "code": "CS362",
+        "name": "Data Science Foundations",
+        "credits": 3,
+        "difficulty": 3,
+        "terms": ["fall", "spring"],
+        "desc": "Data wrangling, analysis, and visualization.",
+    },
+    {
+        "code": "CS364",
+        "name": "Deep Learning",
+        "credits": 3,
+        "difficulty": 4,
+        "terms": ["fall", "spring"],
+        "desc": "Neural networks and modern architectures.",
+    },
+    {
+        "code": "CS366",
+        "name": "Natural Language Processing",
+        "credits": 3,
+        "difficulty": 4,
+        "terms": ["fall", "spring"],
+        "desc": "Language models and text understanding.",
+    },
     {
         "code": "CS420",
         "name": "Capstone Project",
@@ -437,6 +471,11 @@ _PREREQS: list[tuple[str, str, float | None]] = [
     ("CS401", "CS302", None),
     ("CS402", "CS201", None),
     ("CS410", "CS310", None),
+    # AI track — accessible prereqs (CS102 common to CS & DS); CS364 builds on CS360.
+    ("CS360", "CS102", None),
+    ("CS362", "CS102", None),
+    ("CS364", "CS360", None),
+    ("CS366", "CS102", None),
     ("CS420", "CS320", None),
     # Original MATH
     ("CS210", "MATH101", None),
@@ -516,7 +555,10 @@ _PROGRAM_REQS: dict[str, list[dict[str, Any]]] = {
         {
             "group": "CS Electives",
             "credits": 9,
-            "courses": ["CS310", "CS330", "CS340", "CS350", "CS401", "CS402", "CS410"],
+            "courses": [
+                "CS310", "CS330", "CS340", "CS350", "CS401", "CS402", "CS410",
+                "CS360", "CS362", "CS364", "CS366",
+            ],
         },
         {"group": "Math", "credits": 14, "courses": ["MATH101", "MATH102", "MATH201", "MATH210"]},
         {"group": "Science", "credits": 5, "courses": ["PHYS201", "PHYS201L"]},
@@ -529,7 +571,11 @@ _PROGRAM_REQS: dict[str, list[dict[str, Any]]] = {
             "courses": ["DS210", "DS301", "DS320", "DS401", "CS301"],
         },
         {"group": "Methods", "credits": 6, "courses": ["CS330", "DS310"]},
-        {"group": "DS Electives", "credits": 6, "courses": ["DS340", "DS350", "CS350"]},
+        {
+            "group": "DS Electives",
+            "credits": 6,
+            "courses": ["DS340", "DS350", "CS350", "CS360", "CS362", "CS364", "CS366"],
+        },
         {
             "group": "Math & Stats",
             "credits": 14,
@@ -574,15 +620,18 @@ _TENANTS: list[dict[str, str]] = [
 # program=None is the tenant catch-all when no program-specific advisor matches.
 # ---------------------------------------------------------------------------
 
+# Advisor emails all point to the demo inbox so escalation (F4) can be shown live.
+# In production these would be the real per-program advising addresses.
+_DEMO_ADVISOR_EMAIL = "mousaelisar@gmail.com"
 _ADVISORS: dict[str, list[dict[str, Any]]] = {
     "northane": [
-        {"name": "Dr. Lena Park", "email": "advising-cs@northane.edu", "program": "BSCS"},
-        {"name": "Dr. Omar Reyes", "email": "advising-ds@northane.edu", "program": "BSDS"},
-        {"name": "Northane Advising Office", "email": "advising@northane.edu", "program": None},
+        {"name": "Dr. Lena Park", "email": _DEMO_ADVISOR_EMAIL, "program": "BSCS"},
+        {"name": "Dr. Omar Reyes", "email": _DEMO_ADVISOR_EMAIL, "program": "BSDS"},
+        {"name": "Northane Advising Office", "email": _DEMO_ADVISOR_EMAIL, "program": None},
     ],
     "summit": [
-        {"name": "Dr. Maya Cohen", "email": "advising-cs@summit.edu", "program": "BSCS"},
-        {"name": "Summit Advising Office", "email": "advising@summit.edu", "program": None},
+        {"name": "Dr. Maya Cohen", "email": _DEMO_ADVISOR_EMAIL, "program": "BSCS"},
+        {"name": "Summit Advising Office", "email": _DEMO_ADVISOR_EMAIL, "program": None},
     ],
 }
 
@@ -628,6 +677,73 @@ _TERM_SLOTS: list[list[dict[str, int | str]]] = [
     ],
 ]
 
+# Alternate meeting patterns for the SECOND section of each course. Deliberately
+# include an 8 AM pattern and Friday patterns so a student preference like
+# "no 8am, no Fridays" actually discriminates between section options — the agent
+# reasons over these against the student's stated prefs (the engine still validates).
+_ALT_SLOTS: list[list[dict[str, int | str]]] = [
+    [
+        {"day": "tue", "start_min": 960, "end_min": 1035},  # Tue/Thu 4:00 PM
+        {"day": "thu", "start_min": 960, "end_min": 1035},
+    ],
+    [
+        {"day": "mon", "start_min": 480, "end_min": 555},  # Mon/Wed 8:00 AM (early)
+        {"day": "wed", "start_min": 480, "end_min": 555},
+    ],
+    [
+        {"day": "fri", "start_min": 780, "end_min": 900},  # Friday 1:00 PM only
+    ],
+    [
+        {"day": "wed", "start_min": 660, "end_min": 735},  # Wed/Fri 11:00 AM
+        {"day": "fri", "start_min": 660, "end_min": 735},
+    ],
+]
+
+# Explicit per-course section times (overrides the cycled defaults). Used to make the
+# "no 8 AM / no Fridays" demo crisp and reliable in BOTH directions:
+#   • CS202 → has an OPEN non-8 AM, non-Friday option (Keel finds a section that fits).
+#   • ECON101 → ONLY 8 AM sections (Keel alerts: no section except 8 AM, offer to relax).
+# Both override courses get OPEN sections so meeting time is the only discriminator.
+_SLOT_OVERRIDES: dict[str, list[list[dict[str, int | str]]]] = {
+    "CS202": [
+        [{"day": "mon", "start_min": 660, "end_min": 735},
+         {"day": "wed", "start_min": 660, "end_min": 735}],   # Mon/Wed 11:00 AM (the fit)
+        [{"day": "tue", "start_min": 480, "end_min": 555},
+         {"day": "thu", "start_min": 480, "end_min": 555}],    # Tue/Thu 8:00 AM (early alt)
+    ],
+    "ECON101": [
+        [{"day": "mon", "start_min": 480, "end_min": 555},
+         {"day": "wed", "start_min": 480, "end_min": 555}],    # Mon/Wed 8:00 AM
+        [{"day": "tue", "start_min": 480, "end_min": 555},
+         {"day": "thu", "start_min": 480, "end_min": 555}],    # Tue/Thu 8:00 AM (only 8 AM)
+    ],
+}
+
+# Synthetic instructor names (seeded — NOT real people; see DATA.md).
+_INSTRUCTORS: list[str] = [
+    "Dr. Haddad",
+    "Prof. Nasser",
+    "Dr. Khoury",
+    "Prof. Saab",
+    "Dr. Mansour",
+    "Prof. Aziz",
+    "Dr. Rahal",
+    "Prof. Tannous",
+]
+
+# Term availability: most courses are offered (and sectioned) in BOTH fall and spring so
+# a student can register their CURRENT term smoothly. A few stay single-term so the
+# "not offered this term → take it another term" remedy is still demonstrable. This drives
+# both the course's offered_terms and which terms get sections.
+_SINGLE_TERM_KEEP: dict[str, list[str]] = {
+    "CS420": ["spring"],   # spring-only → exercises "not offered in fall"
+    "CHEM410": ["fall"],   # fall-only
+}
+
+
+def _effective_terms(code: str) -> list[str]:
+    return _SINGLE_TERM_KEEP.get(code, ["fall", "spring"])
+
 # ---------------------------------------------------------------------------
 # Students (§9.6)
 # Transcript entry: (course_code, term, year, grade, passed)
@@ -637,8 +753,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
     "northane": [
         {
             "label": "N1",
-            "email": "alex.morgan@northane.edu",
-            "display_name": "Alex Morgan",
+            "email": "alisar.hadid@northane.edu",
+            "display_name": "Alisar Hadid",
             "program_code": "BSCS",
             "current_term": "fall",
             "current_year": 2026,
@@ -653,8 +769,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
         },
         {
             "label": "N2",
-            "email": "jordan.lee@northane.edu",
-            "display_name": "Jordan Lee",
+            "email": "omar.khalil@northane.edu",
+            "display_name": "Omar Khalil",
             "program_code": "BSCS",
             "current_term": "fall",
             "current_year": 2026,
@@ -674,8 +790,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
         },
         {
             "label": "N3",
-            "email": "riley.chen@northane.edu",
-            "display_name": "Riley Chen",
+            "email": "lina.saab@northane.edu",
+            "display_name": "Lina Saab",
             "program_code": "BSCS",
             "current_term": "fall",
             "current_year": 2026,
@@ -693,8 +809,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
     "summit": [
         {
             "label": "S1",
-            "email": "taylor.brooks@summit.edu",
-            "display_name": "Taylor Brooks",
+            "email": "maya.haddad@summit.edu",
+            "display_name": "Maya Haddad",
             "program_code": "BSCS",
             "current_term": "fall",
             "current_year": 2026,
@@ -709,8 +825,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
         },
         {
             "label": "S2",
-            "email": "morgan.patel@summit.edu",
-            "display_name": "Morgan Patel",
+            "email": "jad.nasser@summit.edu",
+            "display_name": "Jad Nasser",
             "program_code": "BSCS",
             "current_term": "spring",
             "current_year": 2026,
@@ -739,8 +855,8 @@ _STUDENTS: dict[str, list[dict[str, Any]]] = {
         },
         {
             "label": "S3",
-            "email": "casey.wu@summit.edu",
-            "display_name": "Casey Wu",
+            "email": "sara.khoury@summit.edu",
+            "display_name": "Sara Khoury",
             "program_code": "BSCS",
             "current_term": "fall",
             "current_year": 2026,
@@ -781,7 +897,7 @@ async def _seed_tenant(
                 name=c["name"],
                 credits=c["credits"],
                 difficulty=c["difficulty"],
-                offered_terms=c["terms"],
+                offered_terms=_effective_terms(c["code"]),
                 description=c["desc"],
             )
         )
@@ -833,25 +949,51 @@ async def _seed_tenant(
             )
 
     # Sections (per-tenant overrides applied).
+    # Each course gets TWO sections per offered term: a PRIMARY (unique diagonal slot
+    # → a conflict-free combo across distinct courses always exists, so the course is
+    # registrable) and an ALTERNATE (varied time incl. 8am/Friday, sometimes full) so
+    # the agent can match the student's section choice to their stated preferences.
+    # A forced-full course (CS301/DS210 overrides) has BOTH sections full → no open
+    # section → exercises the "offer waitlist / another term" branch.
     overrides = _SECTION_OVERRIDES.get(slug, {})
     code_to_idx = {c["code"]: i for i, c in enumerate(_COURSES)}
     for c in _COURSES:
-        base_term = c["terms"][0]
-        base_enrolled = code_to_idx[c["code"]] % 5
+        idx = code_to_idx[c["code"]]
         ovr = overrides.get(c["code"], {})
-        term = ovr.get("term", base_term)
-        enrolled = ovr.get("enrolled", base_enrolled)
-        session.add(
-            Section(
-                tenant_id=tenant_id,
-                course_code=c["code"],
-                term=term,
-                year=2026,
-                slots=_TERM_SLOTS[code_to_idx[c["code"]] % len(_TERM_SLOTS)],
-                capacity=30,
-                enrolled=enrolled,
-            )
-        )
+        forced_full = int(ovr.get("enrolled", 0)) >= 30
+
+        # Seed two sections in EACH term the course is offered (most courses → both
+        # fall and spring), so a student can register in their current term.
+        for term in _effective_terms(c["code"]):
+            primary_enrolled = 30 if forced_full else idx % 5
+            # ~1 in 3 alternates is full so "that option is full" is a real branch; a
+            # non-forced course always keeps its primary open, so it stays registrable.
+            alt_enrolled = 30 if (forced_full or idx % 3 == 0) else (idx % 4) + 2
+
+            slot_ovr = _SLOT_OVERRIDES.get(c["code"])
+            if slot_ovr:
+                # Explicit times for the no-8 AM demo; keep both OPEN (unless forced full)
+                # so the meeting TIME is the only thing the preference filter acts on.
+                open_enr = 30 if forced_full else 5
+                sections = [(slot_ovr[0], open_enr), (slot_ovr[1], open_enr)]
+            else:
+                sections = [
+                    (_TERM_SLOTS[idx % len(_TERM_SLOTS)], primary_enrolled),
+                    (_ALT_SLOTS[idx % len(_ALT_SLOTS)], alt_enrolled),
+                ]
+            for sec_i, (slots, enrolled) in enumerate(sections):
+                session.add(
+                    Section(
+                        tenant_id=tenant_id,
+                        course_code=c["code"],
+                        term=term,
+                        year=2026,
+                        slots=slots,
+                        capacity=30,
+                        enrolled=enrolled,
+                        instructor=_INSTRUCTORS[(idx + sec_i) % len(_INSTRUCTORS)],
+                    )
+                )
 
     # Advisors (Phase 4 — F4 routing reference).
     for adv in _ADVISORS.get(slug, []):
@@ -1010,17 +1152,17 @@ _PORTAL_USERS: dict[str, list[dict[str, Any]]] = {
         {
             "email": "alisar@northane.edu",
             "role": "student",
-            "student_email": "alex.morgan@northane.edu",
+            "student_email": "alisar.hadid@northane.edu",
         },
         {
             "email": "omar@northane.edu",
             "role": "student",
-            "student_email": "jordan.lee@northane.edu",
+            "student_email": "omar.khalil@northane.edu",
         },
         {
             "email": "lina@northane.edu",
             "role": "student",
-            "student_email": "riley.chen@northane.edu",
+            "student_email": "lina.saab@northane.edu",
         },
         # Registrar
         {"email": "registrar@northane.edu", "role": "registrar", "student_email": None},
@@ -1029,10 +1171,10 @@ _PORTAL_USERS: dict[str, list[dict[str, Any]]] = {
         {
             "email": "maya@summit.edu",
             "role": "student",
-            "student_email": "taylor.brooks@summit.edu",
+            "student_email": "maya.haddad@summit.edu",
         },
-        {"email": "jad@summit.edu", "role": "student", "student_email": "morgan.patel@summit.edu"},
-        {"email": "sara@summit.edu", "role": "student", "student_email": "casey.wu@summit.edu"},
+        {"email": "jad@summit.edu", "role": "student", "student_email": "jad.nasser@summit.edu"},
+        {"email": "sara@summit.edu", "role": "student", "student_email": "sara.khoury@summit.edu"},
         {"email": "registrar@summit.edu", "role": "registrar", "student_email": None},
     ],
 }
