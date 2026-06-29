@@ -33,10 +33,40 @@ Bucket: `keel-artifacts`.
 
 Experiment tracking. Port is 5001 on host (macOS AirPlay holds 5000).
 
+### Jaeger UI — http://localhost:16686
+
+Distributed tracing (D-R-014). `api` and `worker` export OTLP to the in-stack
+Jaeger (`OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317`, default). Pick service
+`keel-api` (or `keel-worker`) → a chat turn reads top-down: FastAPI request →
+`agent.turn` → `agent.llm` (the model's tool-call decisions) → `agent.tool.*`
+(tool inputs/outputs) → SQLAlchemy / Redis / **httpx** child spans (DB, cache, and
+the LLM/model-server calls). Set `OTEL_EXPORTER_OTLP_ENDPOINT=` empty to disable
+(spans still created, no export). Traces are in-memory — restarting Jaeger clears them.
+
 ### Northane Portal — http://localhost:3001
 ### Summit Portal — http://localhost:3002
-### Admin Dashboard — http://localhost:8000/admin-ui/
-### Platform Console — http://localhost:8000/platform-ui/
+### Keel Console — http://localhost:8000/keel/
+The admin + operator console is one role-based SPA served at `/keel` (a
+`tenant_admin` JWT lands on the admin views; a `platform_operator` JWT lands on the
+operator views). Log in via `POST /auth/login` to get the JWT. The widget iframe is
+served at `/widget/`; `widget.js` (the loader) at `/widget.js`.
+
+### Where notifications go
+After an approved write, the durable notification path is **outbox → worker**: the
+`outbox_publisher` job (per-tenant, RLS-scoped) enqueues each unprocessed row and
+`send_outbox_event` delivers it, marking `processed=true`.
+
+**Email (G4).** Email is **ON** for **Keel-originated actions only** (registration,
+waitlist, seat-fill, petition, graduation application, major-change, escalation).
+With SMTP disabled (default) the send is **simulated** — logged as
+`email.simulated_send` to the demo inbox `mousaelisar@gmail.com` (we have no real
+per-student mailboxes). To send for real, set `KEEL_SMTP_ENABLED=true` + host. The
+student also sees an **inline widget confirmation** at action time.
+
+**No Keel email for SIS actions.** A registrar approve/reject is an **SIS-domain**
+outcome, not a Keel action — the portal writes a `request.approved` /
+`request.rejected` outbox + `audit_log` row, and the worker **skips** emailing it
+(`worker.email.skipped_non_keel`). Keel never notifies on another system's decision.
 
 ---
 
@@ -47,29 +77,29 @@ Experiment tracking. Port is 5001 on host (macOS AirPlay holds 5000).
 ### Platform Operator (POST /auth/login → Keel API, then use Platform Console)
 | Email | Password |
 |---|---|
-| `operator@keel.platform` | `keel-operator-demo` |
+| `operator@keel.platform` | `123` |
 
 ### Tenant Admins (POST /auth/login → Keel API, then use Admin Console)
 | Email | Password | Tenant |
 |---|---|---|
-| `admin@northane.edu` | `keel-admin-demo` | Northane University |
-| `admin@summit.edu` | `keel-admin-demo` | Summit College |
+| `admin@northane.edu` | `123` | Northane University |
+| `admin@summit.edu` | `123` | Summit College |
 
 ### Portal Students (email + password on portal login page)
-| Email | Password | Portal | Notes |
+| Email | Password | Portal | Student |
 |---|---|---|---|
-| `alisar@northane.edu` | `keel-portal-demo` | Northane (:3001) | Maps to Alex Morgan |
-| `omar@northane.edu` | `keel-portal-demo` | Northane (:3001) | Maps to Jordan Lee |
-| `lina@northane.edu` | `keel-portal-demo` | Northane (:3001) | Maps to Riley Chen (at-risk) |
-| `maya@summit.edu` | `keel-portal-demo` | Summit (:3002) | Maps to Taylor Brooks |
-| `jad@summit.edu` | `keel-portal-demo` | Summit (:3002) | Maps to Morgan Patel |
-| `sara@summit.edu` | `keel-portal-demo` | Summit (:3002) | Maps to Casey Wu (hold) |
+| `alisar@northane.edu` | `123` | Northane (:3001) | Alisar Hadid |
+| `omar@northane.edu` | `123` | Northane (:3001) | Omar Khalil |
+| `lina@northane.edu` | `123` | Northane (:3001) | Lina Saab (at-risk) |
+| `maya@summit.edu` | `123` | Summit (:3002) | Maya Haddad |
+| `jad@summit.edu` | `123` | Summit (:3002) | Jad Nasser (57 cr) |
+| `sara@summit.edu` | `123` | Summit (:3002) | Sara Khoury (hold) |
 
 ### Portal Registrars
 | Email | Password | Portal |
 |---|---|---|
-| `registrar@northane.edu` | `keel-portal-demo` | Northane (:3001) |
-| `registrar@summit.edu` | `keel-portal-demo` | Summit (:3002) |
+| `registrar@northane.edu` | `123` | Northane (:3001) |
+| `registrar@summit.edu` | `123` | Summit (:3002) |
 
 ---
 

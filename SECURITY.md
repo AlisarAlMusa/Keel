@@ -104,24 +104,48 @@ CI red-team gate: a curated set of injection probes and cross-tenant probes must
 
 The most critical security property: **no side-effecting write (enrollment, waitlist, petition, major-change, graduation application) ever executes without explicit, verified approval.**
 
-### 5.1 The action pattern (see SPEC.md §8)
+### 5.1 The action pattern (see SPEC.md §8, DESIGN.md §4)
 
-Every write follows: validate → require `ApprovalToken` → single DB transaction (domain row + outbox event) → audit log. The `ApprovalToken` is:
+Every write follows: **stage a pending action (frozen payload) → require explicit
+student approval → engine re-validates → single DB transaction (domain row + outbox
+event) → audit log**. As-built, "approval" is a persisted state machine on the
+`actions` table rather than a separate `ApprovalToken` object (the safety property is
+equivalent; SPEC §8 is annotated):
 
-- Issued only after the student explicitly approves (button click in the widget, not implicit).
-- Scoped to a specific `action_id` and `idempotency_key`.
-- Short-lived (≤ 5 minutes).
-- Single-use (consumed on first execution; replay returns the original receipt).
+- A staged action is `status='pending'`; it carries the **frozen** payload and the
+  LangGraph `thread_id` to resume on (recorded from the runtime, **never** from an
+  LLM argument).
+- The student approves via `POST /actions/{action_id}/approve`, authenticated by the
+  **verified widget Bearer JWT** — the same token `/chat` uses. Identity comes from
+  the signed token, never from a client-supplied header.
+- The approve handler loads the action under the caller's tenant RLS (cross-tenant →
+  404), asserts `action.student_id == token.student_id` (else 403), and requires
+  `status='pending'` (else 409). Only then is `status` advanced and the graph resumed.
+- Execution (`execute_node`) runs **only on an approved resume**, re-validates engine
+  preconditions, and writes once. The transition `approved → executed` is single-use
+  (a second resume sees `executed`, not `approved`).
+
+> Historical note: the approve/reject endpoints previously trusted spoofable
+> `X-Student-Id`/`X-Tenant-Id` headers (and the widget never sent them, so approval
+> 401'd). That scheme is removed — see §3.1. No agent tool exposes an `approved`
+> field, and **no agent tool calls a write service with `approved=True`** (the F3
+> petition tool that used to do so now stages like every other write).
 
 ### 5.2 What cannot happen
 
-- An LLM tool call alone cannot trigger a write — the tool checks for a valid `ApprovalToken` before step 4. Missing/invalid token → immediate rejection, no DB write.
-- A prompt-injection that convinces the LLM to call `execute_enrollment` still fails — the tool requires the token, which only the widget's approval button can issue.
-- An expired or replayed token is rejected.
+- An LLM tool call alone cannot trigger a write — write tools only *stage* a pending
+  action; the actual write runs in `execute_node` after an approved resume.
+- A prompt-injection that convinces the LLM to call a write/stage tool still cannot
+  commit: the staged action sits `pending` until a human approves via the
+  JWT-authenticated endpoint, and identity/tenant/thread are bound from the verified
+  context, not the model's arguments.
+- An approval for another tenant's/student's action is rejected (404/403).
 
 ### 5.3 Acceptance
 
-CI gate: inject a tool call without an approval token, with an expired token, and with a replayed token — all must be rejected before any DB write occurs. Test once, covers all action types.
+CI gate: a stage/tool call without approval, with a non-pending action, or for a
+cross-tenant/cross-student action — all must be rejected before any DB write occurs.
+Test once, covers all action types.
 
 ---
 
