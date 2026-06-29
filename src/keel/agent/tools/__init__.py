@@ -5,7 +5,7 @@ Callers (graph.py, main.py) import from `keel.agent.tools` unchanged.
 
 Tool groups:
   advising.py   — audit_degree, rag_search  (+ predict_risk, gpa_estimate in Phase 3)
-  planning.py   — propose_plan              (+ simulate_whatif, save/load/activate/swap in Phase 3)
+  planning.py   — propose_plan, plan_graduation, active grad-plan metadata tools
   enrollment.py — stage_enrollment, stage_waitlist_join, stage_waitlist_leave  (Phase 3)
 """
 
@@ -26,7 +26,7 @@ __all__ = ["AgentDeps", "make_tools"]
 def make_tools(deps: AgentDeps) -> list[Any]:
     """Assemble all agent tools closed over their dependencies.
 
-    Phase 4 adds the advising-chat (C1–C4), guidance (E1/E2 + save), and
+    Phase 4 adds the advising-chat (C1–C4), guidance (E1/E2), and
     institutional (F1–F4) tool groups. The four F-tools are PROPOSAL-ONLY and
     expose no ``approved`` flag — the write gate lives outside the agent.
     """
