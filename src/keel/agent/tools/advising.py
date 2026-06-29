@@ -134,8 +134,10 @@ async def _load_student_data(
     row = await session.execute(
         sa.text("""
             SELECT s.program_id, s.has_hold, s.hold_reason,
-                   s.current_term, s.current_year
+                   s.current_term, s.current_year,
+                   u.display_name AS student_name, u.email AS student_email
             FROM students s
+            LEFT JOIN users u ON u.id = s.user_id
             WHERE s.id = :sid AND s.tenant_id = :tid
         """),
         {"sid": student_id, "tid": tenant_id},
@@ -782,8 +784,7 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
             ]
             if info["has_hold"]:
                 lines.append(
-                    f"⚠ Active hold: {info['hold_reason'] or 'unspecified'} "
-                    "(blocks registration)"
+                    f"⚠ Active hold: {info['hold_reason'] or 'unspecified'} (blocks registration)"
                 )
             else:
                 lines.append("Holds: none")

@@ -19,7 +19,7 @@ pattern). F3 (petition) NEVER produces an enrollment — the engine block stays 
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -392,10 +392,15 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
                 )
             advisor_name, advisor_email = resolved
 
+            student_name = str(data["student"].get("student_name") or "Unknown student")
+            today = datetime.now(UTC).strftime("%B %d, %Y")
             prompt = f4_handoff_summary_prompt.build(
                 recap=reason,
                 transcript_summary=_transcript_summary(transcript, catalog),
                 failed_constraints="",
+                student_name=student_name,
+                student_id=student_id,
+                today=today,
             )
             res = await deps.llm_agent.ainvoke(
                 [SystemMessage(content=prompt), HumanMessage(content="Write the handoff.")]
@@ -414,6 +419,7 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
                         "reason": reason,
                         "program": program_code,
                         "handoff_summary": handoff,
+                        "student_name": student_name,
                     },
                 )
             return _staged(

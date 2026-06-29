@@ -221,6 +221,7 @@ _KEEL_EMAIL_EVENTS: frozenset[str] = frozenset(
         "major_change",
         "petition",
         "escalation_email",
+        "escalation_ack",
     }
 )
 
@@ -277,9 +278,7 @@ def _send_email(*, event_type: str, payload: dict[str, Any]) -> None:
             s_instr = str(s.get("instructor") or "the instructor")
             s_when = str(s.get("when") or "")
             desc = (
-                f"the {s_when} section with {s_instr}"
-                if s_when
-                else f"the section with {s_instr}"
+                f"the {s_when} section with {s_instr}" if s_when else f"the section with {s_instr}"
             )
             lines.append(f"  • {head}: {desc}")
         enrollment_body = (
@@ -323,10 +322,17 @@ def _send_email(*, event_type: str, payload: dict[str, Any]) -> None:
         "major_change": (
             f"Hi {name},\n\nYour major-change request was submitted via Keel.\n\n— Keel"
         ),
-        "petition": (
-            f"Hi {name},\n\nYour {req_type} petition was submitted via Keel.\n\n— Keel"
-        ),
+        "petition": (f"Hi {name},\n\nYour {req_type} petition was submitted via Keel.\n\n— Keel"),
+        # Advisor-facing: this email goes to the human advisor, so it carries the
+        # full handoff summary (which already includes the student name, ID and date).
         "escalation_email": (
+            f"Hi {payload.get('advisor_name') or 'Advisor'},\n\n"
+            "A student has asked Keel to escalate to a human advisor. The handoff "
+            "summary is below.\n\n"
+            f"{payload.get('handoff_summary') or '(no summary available)'}\n\n— Keel"
+        ),
+        # Student-facing: a short confirmation that the handoff was sent.
+        "escalation_ack": (
             f"Hi {name},\n\nYour request was escalated to a human advisor via Keel. "
             "Someone will follow up with you.\n\n— Keel"
         ),
@@ -334,11 +340,17 @@ def _send_email(*, event_type: str, payload: dict[str, Any]) -> None:
     body = _TEMPLATES.get(event_type, f"Event: {event_type}")
 
     # Simulation: address every Keel email to the configured demo inbox (we have no
-    # real per-student mailboxes). Falls back to the payload's address if unset.
-    to_email = settings.keel_email_simulate_to or payload.get("email")
+    # real per-student mailboxes). Falls back to the real recipient otherwise — the
+    # advisor ("to") for an escalation, the student ("email") for everything else.
+    to_email = settings.keel_email_simulate_to or payload.get("to") or payload.get("email")
 
+    _SUBJECTS = {
+        "escalation_email": "Keel: Advisor handoff — escalation",
+        "escalation_ack": "Keel: Your request was escalated",
+    }
+    subject = _SUBJECTS.get(event_type, f"Keel: {event_type}")
     sender = get_email_sender(settings)
-    sender.send(to=to_email, subject=f"Keel: {event_type}", body=body)
+    sender.send(to=to_email, subject=subject, body=body)
 
     _log.info(
         "worker.email.dispatched",
@@ -385,9 +397,7 @@ def capacity_sync_job() -> dict[str, int]:
             for tenant_id in await _active_tenant_ids(session_factory):
                 async with tenant_session(session_factory, tenant_id) as session:
                     sections = await session.execute(
-                        sa.text(
-                            "SELECT id FROM sections WHERE enrolled < capacity LIMIT 200"
-                        )
+                        sa.text("SELECT id FROM sections WHERE enrolled < capacity LIMIT 200")
                     )
                     section_ids = [str(r[0]) for r in sections.fetchall()]
                     for section_id in section_ids:
@@ -559,8 +569,6 @@ async def _section_course_code(session: Any, section_id: str) -> str:
     )
     code = row.scalar_one_or_none()
     return str(code) if code else "your waitlisted course"
-
-
 
 
 async def _inapp_notify(

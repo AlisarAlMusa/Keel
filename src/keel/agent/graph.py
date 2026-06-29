@@ -617,6 +617,7 @@ async def _dispatch_execute(
                 reason=str(payload.get("reason", "")),
                 program=payload.get("program"),
                 handoff_summary=str(payload.get("handoff_summary", "")),
+                student_name=str(payload.get("student_name", "")),
                 approved=True,
             )
             message = er.message
@@ -677,9 +678,7 @@ async def run_agent(
     from keel.agent.plan_channel import bind_plan_channel, collected_plans, reset_plan_channel
     from keel.agent.tracing import get_tracer
 
-    _identity_token = set_request_identity(
-        envelope.tenant_id, envelope.student_id, graph_thread_id
-    )
+    _identity_token = set_request_identity(envelope.tenant_id, envelope.student_id, graph_thread_id)
     # G3: bind a per-turn collector so propose_plan can surface structured plan
     # cards back up to this response (see plan_channel for why a mutable container).
     _plan_token = bind_plan_channel()

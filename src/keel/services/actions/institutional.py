@@ -338,6 +338,7 @@ async def escalate(
     reason: str,
     program: str | None = None,
     handoff_summary: str = "",
+    student_name: str = "",
     approved: bool = False,
 ) -> EscalateResult:
     """Escalate to a human advisor via outbox email (spec F4). approved MUST be True.
@@ -364,6 +365,7 @@ async def escalate(
             )
         advisor_name, advisor_email = resolved
 
+        # Two emails: the handoff to the advisor, and a short ack to the student.
         await outbox_write(
             session,
             tenant_id=tenant_id,
@@ -374,6 +376,15 @@ async def escalate(
                 "student_id": str(student_id),
                 "reason": reason,
                 "handoff_summary": handoff_summary,
+            },
+        )
+        await outbox_write(
+            session,
+            tenant_id=tenant_id,
+            event_type="escalation_ack",
+            payload={
+                "student_id": str(student_id),
+                "student_name": student_name,
             },
         )
         await audit_write(

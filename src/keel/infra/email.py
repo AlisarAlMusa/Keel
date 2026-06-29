@@ -16,6 +16,8 @@ succeeds — at-least-once, no dual-write).
 
 from __future__ import annotations
 
+import html
+import re
 import smtplib
 from email.message import EmailMessage
 from typing import Protocol
@@ -24,6 +26,78 @@ from keel.config import Settings
 from keel.logging import get_logger
 
 _log = get_logger(__name__)
+
+_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_BULLET = re.compile(r"^\s*[*-]\s+(.*)$")
+_NUMBERED = re.compile(r"^\s*\d+\.\s+(.*)$")
+
+
+def _to_plain(body: str) -> str:
+    """Strip the small markdown subset the agent emits so the text reads cleanly:
+    ``**bold**`` loses its markers and ``* item`` / ``- item`` become ``• item``."""
+    out = []
+    for raw in body.splitlines():
+        line = _BOLD.sub(r"\1", raw)
+        m = _BULLET.match(line)
+        if m:
+            line = f"  • {m.group(1)}"
+        out.append(line)
+    return "\n".join(out)
+
+
+def _to_html(body: str) -> str:
+    """Render that same markdown subset to simple, email-safe HTML (bold, bullet and
+    numbered lists, paragraphs). Everything is HTML-escaped first — no raw injection.
+
+    Scans line by line so a heading immediately followed by bullets (no blank line
+    between, as the agent often emits) still becomes a heading paragraph + a list.
+    """
+
+    def _inline(text: str) -> str:
+        return _BOLD.sub(r"<strong>\1</strong>", html.escape(text))
+
+    parts: list[str] = []
+    para: list[str] = []  # buffered plain lines
+    list_tag: str | None = None  # 'ul' | 'ol' while inside a list
+    list_items: list[str] = []
+
+    def _flush_para() -> None:
+        if para:
+            parts.append("<p>" + "<br>".join(_inline(ln) for ln in para) + "</p>")
+            para.clear()
+
+    def _flush_list() -> None:
+        nonlocal list_tag
+        if list_tag:
+            parts.append(f"<{list_tag}>{''.join(list_items)}</{list_tag}>")
+            list_items.clear()
+            list_tag = None
+
+    for raw in body.splitlines():
+        bullet = _BULLET.match(raw)
+        numbered = _NUMBERED.match(raw)
+        if bullet or numbered:
+            _flush_para()
+            tag = "ul" if bullet else "ol"
+            if list_tag and list_tag != tag:
+                _flush_list()
+            list_tag = tag
+            list_items.append(f"<li>{_inline((bullet or numbered).group(1))}</li>")  # type: ignore[union-attr]
+        elif raw.strip() == "":
+            _flush_list()
+            _flush_para()
+        else:
+            _flush_list()
+            para.append(raw)
+    _flush_list()
+    _flush_para()
+
+    inner = "\n".join(parts)
+    return (
+        '<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;'
+        'font-size:14px;line-height:1.55;color:#1a1a2e;">'
+        f"{inner}</div>"
+    )
 
 
 class EmailSender(Protocol):
@@ -69,7 +143,10 @@ class SMTPEmailSender:
         msg["From"] = self._from
         msg["To"] = to
         msg["Subject"] = subject
-        msg.set_content(body)
+        # multipart/alternative: a clean plain-text fallback plus an HTML part so
+        # rich clients render the agent's **bold** and bullet lists nicely.
+        msg.set_content(_to_plain(body))
+        msg.add_alternative(_to_html(body), subtype="html")
         with smtplib.SMTP(self._host, self._port, timeout=10) as smtp:
             if self._starttls:
                 smtp.starttls()
