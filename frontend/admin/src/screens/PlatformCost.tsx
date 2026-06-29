@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Card, EmptyState, Spinner, Table, Tabs, Toast } from '@keel/ui';
-import { getPlatformCost } from '../api';
+import { getPlatformCost, listTenants } from '../api';
 import type { PlatformCostRow } from '../api';
 
 const PERIOD_TABS = [
@@ -16,10 +16,28 @@ function fmt(n: number, decimals = 2) {
 export function PlatformCost() {
   const [tabIndex, setTabIndex] = useState(1);
   const [rows, setRows] = useState<PlatformCostRow[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const period = PERIOD_TABS[tabIndex].value;
+
+  // Resolve tenant_id → name once, so the table reads as names not opaque UUIDs.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await listTenants();
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        for (const t of data.tenants ?? []) map[t.id] = t.name;
+        setNames(map);
+      } catch {
+        /* names are best-effort; fall back to the id below */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,7 +56,9 @@ export function PlatformCost() {
   }, [period]);
 
   const tableRows = rows.map(r => [
-    <code key="tid" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{r.tenant_id.slice(0, 8)}…</code>,
+    <span key="tid" style={{ fontWeight: 600, fontSize: '0.85rem' }}>
+      {names[r.tenant_id] ?? `${r.tenant_id.slice(0, 8)}…`}
+    </span>,
     <span key="kind" style={{ background: '#e8eaf6', color: '#283593', padding: '2px 6px', borderRadius: 3, fontSize: '0.75rem', fontWeight: 600 }}>{r.kind}</span>,
     r.calls.toLocaleString(),
     r.tokens.toLocaleString(),
@@ -67,7 +87,7 @@ export function PlatformCost() {
           ) : rows.length === 0 ? (
             <EmptyState title="No usage data for this period." />
           ) : (
-            <Table headers={['Tenant ID', 'Kind', 'Calls', 'Tokens', 'Est. Cost (USD)']} rows={tableRows} />
+            <Table headers={['Tenant', 'Kind', 'Calls', 'Tokens', 'Est. Cost (USD)']} rows={tableRows} />
           )}
         </div>
       </Card>
