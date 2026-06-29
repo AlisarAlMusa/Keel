@@ -1,11 +1,16 @@
-"""Institutional request agent tools (F1–F4) — PROPOSAL ONLY (spec §3).
+"""Institutional request agent tools (F1–F4) — STAGE ONLY (spec §3 / §8).
 
-These LLM-facing tools deliberately expose NO ``approved`` parameter, so the agent
-can never trigger an institutional write — not even under prompt injection. Each
-tool engine-validates, drafts the paperwork, and calls its service function with
-``approved=False`` (which writes nothing) to return a proposal. The actual write
-(``approved=True``) happens only via an explicit student-approval action outside
-the agent's path (approval UI, Day 6) — the meaningful gate (spec D4).
+These LLM-facing tools deliberately expose NO ``approved`` parameter, and they
+NEVER call the institutional write services directly. Each tool engine-validates,
+drafts the paperwork, then **stages a pending action** (frozen payload) and the
+graph interrupts for explicit student approval — the same gated pattern as
+enrollment. The actual write (``approved=True``) happens only inside
+``execute_node`` after the student approves via ``POST /actions/{id}/approve``.
+
+This closes the prior F3 hole where ``submit_petition`` called the service with
+``approved=True`` directly, letting the agent (or an injection) file a request
+with no approval. Now every institutional filing is gated; petitions appear in the
+registrar's queue only after the student approves.
 
 Writes themselves live in ``services/actions/institutional.py`` (the one action
 pattern). F3 (petition) NEVER produces an enrollment — the engine block stays hard.
@@ -13,6 +18,7 @@ pattern). F3 (petition) NEVER produces an enrollment — the engine block stays 
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
@@ -21,12 +27,14 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from keel.agent.identity import resolve_identity, resolve_thread_id
 from keel.domain.engine.audit import audit
 from keel.domain.engine.contracts import Plan, PlanMeta, PlanTerm
 from keel.domain.engine.verifier import verify
 from keel.domain.schemas import ToolError
 from keel.infra.database.session import tenant_session
 from keel.logging import get_logger
+from keel.services.actions import ActionRepo
 from keel.services.actions import institutional as inst
 from keel.services.prompts import f3_petition_draft_prompt, f4_handoff_summary_prompt
 
@@ -42,6 +50,20 @@ from .advising import (
 _log = get_logger(__name__)
 
 
+def _staged(action_id: UUID, action_type: str, message: str, **extra: Any) -> str:
+    """Build the stage-tool JSON result the graph's stage_node reads for the
+    interrupt (must contain ``action_id`` so the approval card surfaces)."""
+    return json.dumps(
+        {
+            "action_id": str(action_id),
+            "type": action_type,
+            "status": "pending",
+            "message": message,
+            **extra,
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tool input schemas — note: NO `approved` field on any of them (injection-safe)
 # ---------------------------------------------------------------------------
@@ -52,6 +74,9 @@ class ApplyGraduationInput(BaseModel):
 
     student_id: str = Field(description="The student's UUID — copy from the system prompt.")
     tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
+    thread_id: str = Field(
+        description="LangGraph thread ID for this conversation — used to resume after approval."
+    )
 
 
 class RequestMajorChangeInput(BaseModel):
@@ -60,6 +85,9 @@ class RequestMajorChangeInput(BaseModel):
     student_id: str = Field(description="The student's UUID — copy from the system prompt.")
     tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
     target_program_id: str = Field(description="Code of the program to switch to, e.g. 'BSDS'.")
+    thread_id: str = Field(
+        description="LangGraph thread ID for this conversation — used to resume after approval."
+    )
 
 
 class SubmitPetitionInput(BaseModel):
@@ -69,6 +97,9 @@ class SubmitPetitionInput(BaseModel):
     tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
     course_id: str = Field(description="Code of the blocked course to petition for, e.g. 'CS301'.")
     justification: str = Field(description="The student's stated reason for the override request.")
+    thread_id: str = Field(
+        description="LangGraph thread ID for this conversation — used to resume after approval."
+    )
 
 
 class EscalateInput(BaseModel):
@@ -77,6 +108,9 @@ class EscalateInput(BaseModel):
     student_id: str = Field(description="The student's UUID — copy from the system prompt.")
     tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
     reason: str = Field(description="Why the student needs a human advisor.")
+    thread_id: str = Field(
+        description="LangGraph thread ID for this conversation — used to resume after approval."
+    )
 
 
 def _transcript_summary(transcript: list[Any], catalog: dict[str, Any]) -> str:
@@ -94,12 +128,14 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
     """
 
     @tool(args_schema=ApplyGraduationInput)
-    async def apply_graduation(student_id: str, tenant_id: str) -> str:
+    async def apply_graduation(student_id: str, tenant_id: str, thread_id: str) -> str:
         """Prepare a graduation application. The engine confirms ALL requirements are
         met before offering; if any remain, it explains what's missing and files nothing.
         Filing requires the student's explicit approval (a separate step) — this tool
-        only prepares the request and never writes.
+        only stages the request and never writes.
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
+        thread_id = resolve_thread_id(thread_id)
         try:
             term, year = deps.current_term, deps.current_year
             async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
@@ -131,30 +167,40 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
                     f"({int(result.remaining_credits)} credits remaining). "
                     "I can't file a graduation application until these are complete."
                 )
-            # Proposal only — approved=False writes nothing.
-            await inst.apply_graduation(
-                deps.session_factory,
-                tenant_id=UUID(tenant_id),
-                student_id=UUID(student_id),
-                program=program_code,
-                approved=False,
-            )
-            return (
-                f"✅ You've met all requirements for **{program_code}**. "
-                "I've prepared your graduation application. Approve it and I'll file it with the "
-                "registrar's office — nothing is filed until you do."
+            # Stage for approval — nothing is written until the student approves.
+            async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
+                action_id = await ActionRepo.insert_pending(
+                    _db,
+                    tenant_id=UUID(tenant_id),
+                    student_id=UUID(student_id),
+                    thread_id=thread_id,
+                    action_type="graduation",
+                    payload={"program": program_code},
+                )
+            return _staged(
+                action_id,
+                "graduation",
+                (
+                    f"✅ You've met all requirements for {program_code}. I've prepared your "
+                    "graduation application. Approve it and I'll file it with the registrar's "
+                    "office — nothing is filed until you do."
+                ),
             )
         except Exception as exc:
             _log.error("tool.apply_graduation.error", error=str(exc))
             return ToolError(error=str(exc), retryable=True, category="engine").model_dump_json()
 
     @tool(args_schema=RequestMajorChangeInput)
-    async def request_major_change(student_id: str, tenant_id: str, target_program_id: str) -> str:
+    async def request_major_change(
+        student_id: str, tenant_id: str, target_program_id: str, thread_id: str
+    ) -> str:
         """Prepare a major-change request to a target program. The engine computes the
         consequences (lost credits, new timeline); the LLM frames the impact summary
         attached to the request. Filing requires the student's explicit approval — this
-        tool only prepares it and never writes.
+        tool only stages it and never writes.
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
+        thread_id = resolve_thread_id(thread_id)
         try:
             target_program_id = target_program_id.upper()
             term, year = deps.current_term, deps.current_year
@@ -195,18 +241,27 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
                 f"new graduation estimate: {impact['new_graduation_term']} "
                 f"(~{impact['extra_terms']} extra term(s))."
             )
-            await inst.request_major_change(
-                deps.session_factory,
-                tenant_id=UUID(tenant_id),
-                student_id=UUID(student_id),
-                target_program_id=target_program_id,
-                impact_summary=impact_summary,
-                approved=False,
-            )
-            return (
-                f"**Major-change request to {target_program_id} (prepared)**\n{impact_summary}\n\n"
-                "This is a routed request the registrar reviews — it is not auto-approved. "
-                "Approve it and I'll file it; nothing is filed until you do."
+            # Stage for approval — nothing is written until the student approves.
+            async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
+                action_id = await ActionRepo.insert_pending(
+                    _db,
+                    tenant_id=UUID(tenant_id),
+                    student_id=UUID(student_id),
+                    thread_id=thread_id,
+                    action_type="major_change",
+                    payload={
+                        "target_program_id": target_program_id,
+                        "impact_summary": impact_summary,
+                    },
+                )
+            return _staged(
+                action_id,
+                "major_change",
+                (
+                    f"Major-change request to {target_program_id} (prepared)\n{impact_summary}\n\n"
+                    "This is a routed request the registrar reviews — it is not auto-approved. "
+                    "Approve it and I'll file it; nothing is filed until you do."
+                ),
             )
         except Exception as exc:
             _log.error("tool.request_major_change.error", error=str(exc))
@@ -214,12 +269,14 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
 
     @tool(args_schema=SubmitPetitionInput)
     async def submit_petition(
-        student_id: str, tenant_id: str, course_id: str, justification: str
+        student_id: str, tenant_id: str, course_id: str, justification: str, thread_id: str
     ) -> str:
         """Draft a prerequisite-override PETITION for a blocked course. The engine's
         eligibility block is NEVER removed — this prepares a request to a human reviewer,
         never an enrollment. Drafting only; filing requires the student's explicit approval.
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
+        thread_id = resolve_thread_id(thread_id)
         try:
             course_id = course_id.upper()
             term, year = deps.current_term, deps.current_year
@@ -275,34 +332,44 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
             )
             draft = _extract_advise_text(res.content)
 
-            # File immediately — a petition is a request to a human reviewer, not an enrollment.
-            # The student asking "petition for X" is implicit approval; no stage→interrupt needed.
-            result = await inst.submit_petition(
-                deps.session_factory,
-                tenant_id=UUID(tenant_id),
-                student_id=UUID(student_id),
-                course_id=course_id,
-                justification=justification,
-                draft=draft,
-                approved=True,
-            )
-            if not result.written:
-                return f"Petition for {course_id} could not be filed: {result.message}"
-            return (
-                f"✅ **Petition filed with the registrar — {course_id}**\n\n{draft}\n\n"
-                "The registrar will review your request. The prerequisite block remains in place "
-                "until they approve it — you will be notified of the outcome."
+            # Stage for approval — NEVER write here. The prior code called the service
+            # with approved=True, which let the agent (or an injection) file a petition
+            # with no approval. Now the student must explicitly approve; the request_queue
+            # row (and the registrar's view of it) appears only after approval.
+            async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
+                action_id = await ActionRepo.insert_pending(
+                    _db,
+                    tenant_id=UUID(tenant_id),
+                    student_id=UUID(student_id),
+                    thread_id=thread_id,
+                    action_type="petition",
+                    payload={
+                        "course_id": course_id,
+                        "justification": justification,
+                        "draft": draft,
+                    },
+                )
+            return _staged(
+                action_id,
+                "petition",
+                (
+                    f"Petition drafted for {course_id} (a request to the registrar, not an "
+                    f"enrollment):\n\n{draft}\n\nApprove it and I'll file it. The prerequisite "
+                    "block stays in place until the registrar approves it."
+                ),
             )
         except Exception as exc:
             _log.error("tool.submit_petition.error", error=str(exc))
             return ToolError(error=str(exc), retryable=True, category="engine").model_dump_json()
 
     @tool(args_schema=EscalateInput)
-    async def escalate(student_id: str, tenant_id: str, reason: str) -> str:
+    async def escalate(student_id: str, tenant_id: str, reason: str, thread_id: str) -> str:
         """Prepare an escalation/handoff to a human advisor (email only). Resolves the
         advisor from the program and writes a factual handoff summary. Sending requires
-        the student's explicit approval — this tool only prepares it and never sends.
+        the student's explicit approval — this tool only stages it and never sends.
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
+        thread_id = resolve_thread_id(thread_id)
         try:
             term, year = deps.current_term, deps.current_year
             async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
@@ -335,18 +402,27 @@ def make_institutional_tools(deps: AgentDeps) -> list[Any]:
             )
             handoff = _extract_advise_text(res.content)
 
-            await inst.escalate(
-                deps.session_factory,
-                tenant_id=UUID(tenant_id),
-                student_id=UUID(student_id),
-                reason=reason,
-                program=program_code,
-                handoff_summary=handoff,
-                approved=False,
-            )
-            return (
-                f"I can hand this off to **{advisor_name}** ({advisor_email}). Draft summary:\n\n"
-                f"{handoff}\n\nApprove and I'll send it — nothing is sent until you do."
+            # Stage for approval — the email is sent only after the student approves.
+            async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
+                action_id = await ActionRepo.insert_pending(
+                    _db,
+                    tenant_id=UUID(tenant_id),
+                    student_id=UUID(student_id),
+                    thread_id=thread_id,
+                    action_type="escalate",
+                    payload={
+                        "reason": reason,
+                        "program": program_code,
+                        "handoff_summary": handoff,
+                    },
+                )
+            return _staged(
+                action_id,
+                "escalate",
+                (
+                    f"I can hand this off to {advisor_name} ({advisor_email}). Draft summary:\n\n"
+                    f"{handoff}\n\nApprove and I'll send it — nothing is sent until you do."
+                ),
             )
         except Exception as exc:
             _log.error("tool.escalate.error", error=str(exc))

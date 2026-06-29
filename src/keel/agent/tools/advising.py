@@ -15,6 +15,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from keel.agent.identity import resolve_identity, resolve_tenant
 from keel.domain.engine.audit import audit
 from keel.domain.models import Corequisite, Course, Prerequisite, Term, TranscriptEntry
 from keel.domain.schemas import ToolError
@@ -112,6 +113,13 @@ class MajorSwitchAdviceInput(BaseModel):
     )
 
 
+class MyInfoInput(BaseModel):
+    """Input for my_info tool — the student's own account facts."""
+
+    student_id: str = Field(description="The student's UUID — copy from the system prompt.")
+    tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
+
+
 # ---------------------------------------------------------------------------
 # Shared DB query helpers (also imported by planning.py)
 # ---------------------------------------------------------------------------
@@ -125,7 +133,8 @@ async def _load_student_data(
     """Load transcript, program, and catalog for one student."""
     row = await session.execute(
         sa.text("""
-            SELECT s.program_id, s.has_hold, s.hold_reason
+            SELECT s.program_id, s.has_hold, s.hold_reason,
+                   s.current_term, s.current_year
             FROM students s
             WHERE s.id = :sid AND s.tenant_id = :tid
         """),
@@ -215,6 +224,47 @@ async def _load_student_data(
     }
 
 
+def _build_requirement(
+    *,
+    group_name: str,
+    codes: list[str],
+    required_credits: int | None,
+    catalog: dict[str, Course],
+) -> Any:
+    """Model one program-requirement group as CORE or an ELECTIVE_GROUP.
+
+    A group is CORE when the student must take every listed course (the required
+    credits meet or exceed everything on offer in the group). It is an ELECTIVE_GROUP
+    when only *some* of the listed courses are needed (e.g. "9 credits from 7
+    courses") — modelling it as CORE is the bug that made the planner schedule the
+    whole elective pool. ``choose`` is the minimum number of courses (largest-credit
+    first) needed to reach the required credits.
+    """
+    from keel.domain.engine.contracts import CoreRequirement, ElectiveGroupRequirement
+
+    in_cat = [c for c in codes if c in catalog]
+    total_credits = sum(catalog[c].credits for c in in_cat)
+    # No credit cap, or it covers the whole pool → every course is required (CORE).
+    if not required_credits or required_credits >= total_credits or not in_cat:
+        return CoreRequirement(type="CORE", requirement_id=group_name, courses=list(codes))
+
+    # Elective group — choose the fewest courses (largest credits first) to meet the floor.
+    ordered = sorted(in_cat, key=lambda c: (-catalog[c].credits, c))
+    acc = 0
+    choose = 0
+    for c in ordered:
+        if acc >= required_credits:
+            break
+        acc += catalog[c].credits
+        choose += 1
+    return ElectiveGroupRequirement(
+        type="ELECTIVE_GROUP",
+        requirement_id=group_name,
+        choose=max(1, choose),
+        from_courses=list(in_cat),
+    )
+
+
 def _build_engine_objects(
     data: dict[str, Any],
     current_term: Term,
@@ -292,10 +342,11 @@ def _build_engine_objects(
             if isinstance(codes, str):
                 codes = json.loads(codes)
             reqs.append(
-                CoreRequirement(
-                    type="CORE",
-                    requirement_id=rr["group_name"],
-                    courses=list(codes),
+                _build_requirement(
+                    group_name=rr["group_name"],
+                    codes=list(codes),
+                    required_credits=rr.get("required_credits"),
+                    catalog=catalog,
                 )
             )
         if not reqs:
@@ -352,7 +403,12 @@ async def _load_program_engine(
         if isinstance(codes, str):
             codes = json.loads(codes)
         reqs.append(
-            CoreRequirement(type="CORE", requirement_id=rr["group_name"], courses=list(codes))
+            _build_requirement(
+                group_name=rr["group_name"],
+                codes=list(codes),
+                required_credits=rr.get("required_credits"),
+                catalog=catalog,
+            )
         )
     if not reqs:
         reqs = [CoreRequirement(type="CORE", requirement_id="all", courses=list(catalog.keys()))]
@@ -365,15 +421,15 @@ async def _load_program_engine(
 
 
 def _term_after(term: Term, year: int, n_terms: int) -> str:
-    """Advance (term, year) by n_terms over a fall↔spring cadence; return a label."""
-    order = [Term.FALL, Term.SPRING]
-    try:
-        idx = order.index(term)
-    except ValueError:
-        idx = 0
-    total = idx + n_terms
-    new_term = order[total % 2]
-    new_year = year + (total // 2)
+    """Advance (term, year) by n_terms over a fall↔spring cadence; return a label.
+
+    Standard calendar: within year Y, Spring precedes Fall; Fall <Y> → Spring <Y+1>.
+    Absolute semester index: Spring Y = 2Y, Fall Y = 2Y+1 (start-agnostic).
+    """
+    base = 2 * year + (1 if term == Term.FALL else 0)
+    nxt = base + n_terms
+    new_term = Term.FALL if nxt % 2 == 1 else Term.SPRING
+    new_year = nxt // 2
     return f"{new_term.value.title()} {new_year}"
 
 
@@ -427,6 +483,7 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
         remaining credits, and courses eligible to take right now.
         Use this before proposing any plan.
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
         try:
             async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
                 data = await _load_student_data(_db, student_id, tenant_id)
@@ -493,6 +550,7 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
         degree requirements, and any factual university information.
         Academic answers must be grounded in a rag_search result.
         """
+        tenant_id = resolve_tenant(tenant_id)
         try:
             async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
                 results = await retrieve(
@@ -531,6 +589,7 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
         Features are NEVER LLM-computed — they come from the engine + shared compute_features.
         Use after propose_plan to score each candidate plan.
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
         try:
             from keel.domain.models import Term as _Term
 
@@ -624,6 +683,7 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
         This is an estimate only — NOT a prediction. Always hard-caveated.
         Never present this as a guarantee or use it to gate feasibility.
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
         try:
             async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
                 data = await _load_student_data(_db, student_id, tenant_id)
@@ -672,7 +732,67 @@ def make_advising_tools(deps: AgentDeps) -> list[Any]:
             err = ToolError(error=str(exc), retryable=True, category="engine")
             return err.model_dump_json()
 
-    return [audit_degree, rag_search, predict_risk, gpa_estimate]
+    @tool(args_schema=MyInfoInput)
+    async def my_info(student_id: str, tenant_id: str) -> str:
+        """Return the student's own account facts — major/program, GPA, completed credits,
+        current term, courses failed, and any holds. Use for 'what's my major',
+        'what's my GPA', 'do I have a hold', 'what's my standing', 'what's my info'.
+        Pure DB lookup — reads the authoritative student record (reflects an approved
+        major change). Read-only.
+        """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
+        try:
+            async with tenant_session(deps.session_factory, UUID(tenant_id)) as session:
+                row = await session.execute(
+                    sa.text(
+                        "SELECT s.current_term, s.current_year, s.has_hold, s.hold_reason, "
+                        "p.code AS program_code, p.name AS program_name "
+                        "FROM students s LEFT JOIN programs p ON p.id = s.program_id "
+                        "WHERE s.id = :sid AND s.tenant_id = :tid"
+                    ),
+                    {"sid": student_id, "tid": tenant_id},
+                )
+                info = row.mappings().first()
+                if not info:
+                    return ToolError(
+                        error="Student not found.", retryable=False, category="validation"
+                    ).model_dump_json()
+                agg = await session.execute(
+                    sa.text(
+                        "SELECT COALESCE(SUM(c.credits) FILTER (WHERE tr.passed), 0) AS cc, "
+                        "ROUND(AVG(tr.grade) FILTER (WHERE tr.grade IS NOT NULL), 2) AS gpa, "
+                        "COUNT(*) FILTER (WHERE NOT tr.passed) AS failed "
+                        "FROM student_transcript tr "
+                        "LEFT JOIN courses c ON c.code = tr.course_code "
+                        "AND c.tenant_id = tr.tenant_id "
+                        "WHERE tr.student_id = :sid AND tr.tenant_id = :tid"
+                    ),
+                    {"sid": student_id, "tid": tenant_id},
+                )
+                a_row = agg.mappings().first()
+                a: dict[str, Any] = dict(a_row) if a_row else {}
+            gpa = a.get("gpa")
+            lines = [
+                f"Major / program: {info['program_name'] or 'Undeclared'} "
+                f"({info['program_code'] or '—'})",
+                f"Current term: {str(info['current_term']).title()} {info['current_year']}",
+                f"GPA: {gpa if gpa is not None else 'N/A'}",
+                f"Completed credits: {int(a.get('cc') or 0)}",
+                f"Courses failed: {int(a.get('failed') or 0)}",
+            ]
+            if info["has_hold"]:
+                lines.append(
+                    f"⚠ Active hold: {info['hold_reason'] or 'unspecified'} "
+                    "(blocks registration)"
+                )
+            else:
+                lines.append("Holds: none")
+            return "Here are your account details:\n" + "\n".join(f"- {ln}" for ln in lines)
+        except Exception as exc:
+            _log.error("tool.my_info.error", error=str(exc))
+            return ToolError(error=str(exc), retryable=True, category="engine").model_dump_json()
+
+    return [audit_degree, rag_search, predict_risk, gpa_estimate, my_info]
 
 
 # ---------------------------------------------------------------------------
@@ -697,6 +817,7 @@ def make_advising_chat_tools(deps: AgentDeps) -> list[Any]:
         grounded in the catalog (RAG). Prerequisite facts are injected from the engine
         DAG, never from prose. Use for 'what does CS301 cover/require?' style questions.
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
         try:
             async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
                 results = await retrieve(
@@ -762,6 +883,7 @@ def make_advising_chat_tools(deps: AgentDeps) -> list[Any]:
         The engine computes every number (missing requirements, remaining credits,
         eligible courses); the LLM only restates them verbatim — never recomputed.
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
         try:
             async with tenant_session(deps.session_factory, UUID(tenant_id)) as _db:
                 data = await _load_student_data(_db, student_id, tenant_id)
@@ -818,6 +940,7 @@ def make_advising_chat_tools(deps: AgentDeps) -> list[Any]:
         transcript; the recovery plan is produced by the SAME propose→verify→repair loop
         as propose_plan (failure baked into the audit) and is verifier-valid. No write.
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
         try:
             failed_course = failed_course.upper()
             term, year = deps.current_term, deps.current_year
@@ -943,6 +1066,7 @@ def make_advising_chat_tools(deps: AgentDeps) -> list[Any]:
         frames an explicitly ADVISORY recommendation — never a guarantee. No write.
         The action to actually switch is request_major_change (F2).
         """
+        tenant_id, student_id = resolve_identity(tenant_id, student_id)
         try:
             target_program = target_program.upper()
             term, year = deps.current_term, deps.current_year

@@ -41,10 +41,11 @@ from keel.domain.models import (
 # Hard cap on plan length — prevents infinite loops
 _MAX_TERMS: int = 16
 
-# Term rotation: fall → spring → (next year) fall → spring …
+# Term rotation (standard academic calendar): Fall 2026 → Spring 2027 → Fall 2027 …
+# Fall is followed by the NEXT calendar year's Spring; Spring by the SAME year's Fall.
 _NEXT_TERM: dict[Term, tuple[Term, int]] = {
-    Term.FALL: (Term.SPRING, 0),  # same year
-    Term.SPRING: (Term.FALL, 1),  # next year
+    Term.FALL: (Term.SPRING, 1),  # Fall <Y> → Spring <Y+1>
+    Term.SPRING: (Term.FALL, 0),  # Spring <Y> → Fall <Y>
     Term.SUMMER: (Term.FALL, 0),  # treat summer as transitional; go to fall same year
 }
 
@@ -67,6 +68,57 @@ def _all_program_codes(program: Program) -> frozenset[str]:
         elif isinstance(req, ElectiveGroupRequirement):
             codes.update(req.from_courses)
     return frozenset(codes)
+
+
+def _select_required_codes(
+    program: Program,
+    transcript: list[TranscriptEntry],
+    graph: PrereqGraph,
+    catalog: dict[str, Course],
+    prefer_codes: frozenset[str] = frozenset(),
+) -> frozenset[str]:
+    """The set of courses a student must still take to graduate (choose-aware).
+
+    Core requirements contribute every course. An elective group contributes only
+    ``choose`` courses — already-passed ones count first, then the highest-leverage
+    remaining options (unlocks-most, then easiest) — NOT the whole pool. This is what
+    keeps a "9 credits from 7" group from inflating the plan with all 7. The transitive
+    prerequisite closure is added so prereqs get scheduled too.
+
+    ``prefer_codes`` (e.g. courses recommended for a stated career goal) are pulled to the
+    FRONT of each elective group's ranking, so a goal-aligned course is chosen over an
+    equally-eligible alternative — this is how a career interest visibly shapes the plan.
+    """
+    from keel.domain.engine.contracts import (
+        CoreRequirement,
+        ElectiveGroupRequirement,
+    )
+
+    passed = {e.course_code for e in transcript if e.passed}
+    required: set[str] = set()
+    for req in program.requirements:
+        if isinstance(req, CoreRequirement):
+            required.update(c for c in req.courses if c in catalog)
+        elif isinstance(req, ElectiveGroupRequirement):
+            kept = [c for c in req.from_courses if c in passed][: req.choose]
+            required.update(kept)
+            need = req.choose - len(kept)
+            if need > 0:
+                cands = [c for c in req.from_courses if c not in passed and c in catalog]
+                cands.sort(
+                    key=lambda c: (
+                        0 if c in prefer_codes else 1,
+                        -graph.unlocks_count(c),
+                        catalog[c].difficulty,
+                        c,
+                    )
+                )
+                required.update(cands[:need])
+
+    closure: set[str] = set(required)
+    for code in list(required):
+        closure |= set(graph.all_prereqs(code))
+    return frozenset(c for c in closure if c in catalog)
 
 
 def _is_core_code(code: str, program: Program) -> bool:
@@ -99,6 +151,7 @@ def greedy_plan(
     start_year: int,
     credit_cap: int = 15,
     student_id_hint: str | None = None,
+    prefer_codes: frozenset[str] = frozenset(),
 ) -> Plan | None:
     """Produce a verifier-valid plan or return None.
 
@@ -128,7 +181,12 @@ def greedy_plan(
     from uuid import UUID
 
     student_id = UUID(student_id_hint) if student_id_hint else uuid4()
-    program_codes = _all_program_codes(program)
+    # The set of courses still required to graduate, choose-aware (elective groups
+    # contribute only their `choose` count, not the whole pool) and including the
+    # transitive prerequisite closure so prereqs get scheduled too — otherwise a
+    # from-scratch student deadlocks (a required course never becomes eligible
+    # because its prereq was never on the to-schedule list).
+    program_codes = _select_required_codes(program, transcript, graph, catalog, prefer_codes)
 
     # Working copy of passed codes — grows as we schedule terms
     working_passed: set[str] = {e.course_code for e in transcript if e.passed}
@@ -237,8 +295,11 @@ def greedy_plan(
         current_term, current_year = _advance_term(current_term, current_year)
 
     remaining_after = program_codes - working_passed
-    if remaining_after:
-        return None  # Could not complete the program within max_terms
+    # Only give up entirely if NOTHING could be scheduled (e.g. empty eligible pool).
+    # Otherwise return the best-effort path we built — a complete plan when possible, or a
+    # multi-term partial path the caller can present and extend, rather than nothing.
+    if remaining_after and not plan_terms:
+        return None
 
     return Plan(
         plan_id=uuid4(),
