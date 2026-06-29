@@ -47,8 +47,13 @@ export interface KeelTokenResponse {
 }
 
 export async function getKeelToken(): Promise<KeelTokenResponse> {
-  const res = await fetch(`${BASE}/keel-token`, { credentials: 'include' });
+  const res = await fetch(`${BASE}/keel-token`, { credentials: 'include', cache: 'no-store' });
   return handleResponse<KeelTokenResponse>(res);
+}
+
+export async function getWidgetStatus(): Promise<{ available: boolean }> {
+  const res = await fetch(`${BASE}/widget-status`, { credentials: 'include', cache: 'no-store' });
+  return handleResponse<{ available: boolean }>(res);
 }
 
 // ── Student ───────────────────────────────────────────────────────────────────
@@ -72,10 +77,11 @@ export interface Enrollment {
 
 export interface ScheduleResponse {
   enrollments: Enrollment[];
+  student?: { program_code: string | null; major: string | null } | null;
 }
 
 export async function getSchedule(): Promise<ScheduleResponse> {
-  const res = await fetch(`${BASE}/schedule`, { credentials: 'include' });
+  const res = await fetch(`${BASE}/schedule`, { credentials: 'include', cache: 'no-store' });
   return handleResponse<ScheduleResponse>(res);
 }
 
@@ -97,7 +103,7 @@ export interface RequestsResponse {
 }
 
 export async function getRequests(): Promise<RequestsResponse> {
-  const res = await fetch(`${BASE}/requests`, { credentials: 'include' });
+  const res = await fetch(`${BASE}/requests`, { credentials: 'include', cache: 'no-store' });
   return handleResponse<RequestsResponse>(res);
 }
 
@@ -117,7 +123,7 @@ export interface ActivityResponse {
 }
 
 export async function getActivity(): Promise<ActivityResponse> {
-  const res = await fetch(`${BASE}/activity`, { credentials: 'include' });
+  const res = await fetch(`${BASE}/activity`, { credentials: 'include', cache: 'no-store' });
   return handleResponse<ActivityResponse>(res);
 }
 
@@ -126,6 +132,7 @@ export async function getActivity(): Promise<ActivityResponse> {
 export async function getRegistrarRequests(status = 'pending'): Promise<RequestsResponse> {
   const res = await fetch(`${BASE}/registrar/requests?status=${encodeURIComponent(status)}`, {
     credentials: 'include',
+    cache: 'no-store',
   });
   return handleResponse<RequestsResponse>(res);
 }
@@ -164,7 +171,7 @@ export interface CatalogResponse {
 }
 
 export async function getCatalog(): Promise<CatalogResponse> {
-  const res = await fetch(`${BASE}/registrar/catalog`, { credentials: 'include' });
+  const res = await fetch(`${BASE}/registrar/catalog`, { credentials: 'include', cache: 'no-store' });
   return handleResponse<CatalogResponse>(res);
 }
 
@@ -188,8 +195,18 @@ export interface SectionsResponse {
 }
 
 export async function getSections(): Promise<SectionsResponse> {
-  const res = await fetch(`${BASE}/registrar/sections`, { credentials: 'include' });
+  const res = await fetch(`${BASE}/registrar/sections`, { credentials: 'include', cache: 'no-store' });
   return handleResponse<SectionsResponse>(res);
+}
+
+export async function openSeat(
+  sectionId: string,
+): Promise<{ id: string; course_code: string; enrolled: number; capacity: number }> {
+  const res = await fetch(`${BASE}/registrar/sections/${sectionId}/open-seat`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  return handleResponse(res);
 }
 
 export interface Student {
@@ -206,6 +223,6 @@ export interface StudentsResponse {
 }
 
 export async function getStudents(): Promise<StudentsResponse> {
-  const res = await fetch(`${BASE}/registrar/students`, { credentials: 'include' });
+  const res = await fetch(`${BASE}/registrar/students`, { credentials: 'include', cache: 'no-store' });
   return handleResponse<StudentsResponse>(res);
 }

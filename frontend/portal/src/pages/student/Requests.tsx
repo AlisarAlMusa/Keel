@@ -3,7 +3,7 @@
  * (graduation applications, petitions, major-change requests).
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Badge, Spinner, Table } from '@keel/ui';
 import { getRequests } from '../../api';
 import type { RequestItem } from '../../api';
@@ -13,18 +13,22 @@ export function Requests() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await getRequests();
-        setRequests(data.requests);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load requests');
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getRequests();
+      setRequests(data.requests);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load requests');
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (loading) {
     return (
@@ -71,7 +75,24 @@ export function Requests() {
 
   return (
     <div>
-      <h2 className="page-heading">My Requests</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+        <h2 className="page-heading" style={{ margin: 0 }}>My Requests</h2>
+        <button
+          onClick={load}
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--border)',
+            borderRadius: '4px',
+            padding: '5px 12px',
+            color: 'var(--text-muted)',
+            cursor: 'pointer',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            fontSize: '0.8rem',
+          }}
+        >
+          Refresh
+        </button>
+      </div>
       <div
         style={{
           background: 'var(--surface)',

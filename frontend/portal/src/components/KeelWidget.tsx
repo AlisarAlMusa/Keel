@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getKeelToken } from '../api';
+import { getKeelToken, getWidgetStatus } from '../api';
 
 const KEEL_API_URL = (import.meta.env.VITE_KEEL_API_URL as string) || '';
 
@@ -27,8 +27,29 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false); // true once opened first time
+  const [available, setAvailable] = useState(true); // false → tenant suspended, grey out
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const personaNameRef = useRef<string>('Keel Advisor');
+
+  // Probe widget availability on mount (and on focus) so the launcher greys out when the
+  // institution is suspended — without minting a token or waiting for a failed click.
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const s = await getWidgetStatus();
+        if (alive) setAvailable(s.available);
+      } catch {
+        if (alive) setAvailable(true); // fail-open
+      }
+    };
+    void check();
+    window.addEventListener('focus', check);
+    return () => {
+      alive = false;
+      window.removeEventListener('focus', check);
+    };
+  }, []);
 
   // Fetch token and post to iframe — also sends personaName so widget can set header
   const postToken = useCallback(async () => {
@@ -81,6 +102,7 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
   }, [onEnrollmentComplete, postToken]);
 
   function handleOpen() {
+    if (!available) return; // suspended → launcher is greyed; do nothing
     setError(null);
     setOpen(true);
     if (!mounted) {
@@ -101,7 +123,9 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
       {/* Floating chat button — chat-bubble shape (reverse Q: circle + tail bottom-left) */}
       <button
         onClick={handleOpen}
-        aria-label="Open Keel advisor"
+        disabled={!available}
+        aria-label={available ? 'Open Keel advisor' : 'Keel advisor unavailable — institution suspended'}
+        title={available ? 'Keel Advisor' : 'Advisor unavailable — your institution is suspended'}
         style={{
           position: 'fixed',
           bottom: '28px',
@@ -110,9 +134,11 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
           height: '68px',
           /* border-radius: large on top-left, top-right, bottom-right; 0 on bottom-left for the tail */
           borderRadius: '50% 50% 50% 8px',
-          background: '#000435',
-          border: '2.5px solid #4B2E0A',
-          cursor: 'pointer',
+          background: available ? '#000435' : '#3a3f4d',
+          border: `2.5px solid ${available ? '#4B2E0A' : '#5a5f6d'}`,
+          cursor: available ? 'pointer' : 'not-allowed',
+          opacity: available ? 1 : 0.5,
+          filter: available ? 'none' : 'grayscale(1)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -123,6 +149,7 @@ export function KeelWidget({ onEnrollmentComplete }: KeelWidgetProps) {
           transition: 'transform 0.15s ease, box-shadow 0.15s ease',
         }}
         onMouseEnter={(e) => {
+          if (!available) return;
           e.currentTarget.style.transform = 'scale(1.08)';
           e.currentTarget.style.boxShadow = '0 8px 32px rgba(0,4,53,0.65), 0 0 0 4px rgba(75,46,10,0.3)';
         }}
