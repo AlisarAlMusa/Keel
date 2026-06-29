@@ -376,7 +376,7 @@ async def _llm_propose_grad_paths(
         "  'Fastest'  — ~16–18 credits/term, fewest semesters\n"
         "  'Balanced' — ~14 credits/term, steady\n"
         "  'Lighter'  — ~11–12 credits/term, more semesters\n\n"
-        'Respond with ONLY a JSON array:\n'
+        "Respond with ONLY a JSON array:\n"
         '[{"label":"Balanced","terms":[{"term":"fall","year":2026,"courses":["CS101"]},'
         '{"term":"spring","year":2027,"courses":["CS102"]}]}]'
     )
@@ -440,9 +440,7 @@ def _validate_grad_path(
         # the term (the LLM sometimes lists the same course twice in one term — e.g. PHYS201L —
         # which must never reach the card or its save). dict.fromkeys preserves order.
         codes = list(
-            dict.fromkeys(
-                c for c in (t.get("courses") or []) if c in catalog and c not in passed
-            )
+            dict.fromkeys(c for c in (t.get("courses") or []) if c in catalog and c not in passed)
         )
         if sum(catalog[c].credits for c in codes) > 18:
             return None

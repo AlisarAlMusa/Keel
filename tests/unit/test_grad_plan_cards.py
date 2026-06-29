@@ -57,9 +57,7 @@ def test_grad_plan_card_includes_course_names_and_requirement_labels() -> None:
         name="Balanced",
         version=1,
         active=True,
-        terms=[
-            PlanTerm(term=Term.FALL, year=2026, course_codes=["CS201", "HIST110"])
-        ],
+        terms=[PlanTerm(term=Term.FALL, year=2026, course_codes=["CS201", "HIST110"])],
         meta=PlanMeta(generated_by="llm", created_at=datetime.now(UTC)),
     )
 

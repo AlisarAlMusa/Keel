@@ -556,8 +556,17 @@ _PROGRAM_REQS: dict[str, list[dict[str, Any]]] = {
             "group": "CS Electives",
             "credits": 9,
             "courses": [
-                "CS310", "CS330", "CS340", "CS350", "CS401", "CS402", "CS410",
-                "CS360", "CS362", "CS364", "CS366",
+                "CS310",
+                "CS330",
+                "CS340",
+                "CS350",
+                "CS401",
+                "CS402",
+                "CS410",
+                "CS360",
+                "CS362",
+                "CS364",
+                "CS366",
             ],
         },
         {"group": "Math", "credits": 14, "courses": ["MATH101", "MATH102", "MATH201", "MATH210"]},
@@ -706,16 +715,24 @@ _ALT_SLOTS: list[list[dict[str, int | str]]] = [
 # Both override courses get OPEN sections so meeting time is the only discriminator.
 _SLOT_OVERRIDES: dict[str, list[list[dict[str, int | str]]]] = {
     "CS202": [
-        [{"day": "mon", "start_min": 660, "end_min": 735},
-         {"day": "wed", "start_min": 660, "end_min": 735}],   # Mon/Wed 11:00 AM (the fit)
-        [{"day": "tue", "start_min": 480, "end_min": 555},
-         {"day": "thu", "start_min": 480, "end_min": 555}],    # Tue/Thu 8:00 AM (early alt)
+        [
+            {"day": "mon", "start_min": 660, "end_min": 735},
+            {"day": "wed", "start_min": 660, "end_min": 735},
+        ],  # Mon/Wed 11:00 AM (the fit)
+        [
+            {"day": "tue", "start_min": 480, "end_min": 555},
+            {"day": "thu", "start_min": 480, "end_min": 555},
+        ],  # Tue/Thu 8:00 AM (early alt)
     ],
     "ECON101": [
-        [{"day": "mon", "start_min": 480, "end_min": 555},
-         {"day": "wed", "start_min": 480, "end_min": 555}],    # Mon/Wed 8:00 AM
-        [{"day": "tue", "start_min": 480, "end_min": 555},
-         {"day": "thu", "start_min": 480, "end_min": 555}],    # Tue/Thu 8:00 AM (only 8 AM)
+        [
+            {"day": "mon", "start_min": 480, "end_min": 555},
+            {"day": "wed", "start_min": 480, "end_min": 555},
+        ],  # Mon/Wed 8:00 AM
+        [
+            {"day": "tue", "start_min": 480, "end_min": 555},
+            {"day": "thu", "start_min": 480, "end_min": 555},
+        ],  # Tue/Thu 8:00 AM (only 8 AM)
     ],
 }
 
@@ -736,13 +753,14 @@ _INSTRUCTORS: list[str] = [
 # "not offered this term → take it another term" remedy is still demonstrable. This drives
 # both the course's offered_terms and which terms get sections.
 _SINGLE_TERM_KEEP: dict[str, list[str]] = {
-    "CS420": ["spring"],   # spring-only → exercises "not offered in fall"
-    "CHEM410": ["fall"],   # fall-only
+    "CS420": ["spring"],  # spring-only → exercises "not offered in fall"
+    "CHEM410": ["fall"],  # fall-only
 }
 
 
 def _effective_terms(code: str) -> list[str]:
     return _SINGLE_TERM_KEEP.get(code, ["fall", "spring"])
+
 
 # ---------------------------------------------------------------------------
 # Students (§9.6)

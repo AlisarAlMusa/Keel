@@ -149,9 +149,7 @@ async def _handle_lite(
     try:
         llm = llm_lite.bind(max_output_tokens=50)
         system = _CHITCHAT_SYSTEM.format(name=persona_name or "Keel")
-        result = await llm.ainvoke(
-            [SystemMessage(content=system), HumanMessage(content=message)]
-        )
+        result = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=message)])
         content = result.content
         if isinstance(content, list):
             text = " ".join(

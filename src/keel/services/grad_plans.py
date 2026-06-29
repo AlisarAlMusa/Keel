@@ -391,9 +391,7 @@ async def load_active_grad_plan(
     )
     if violations:
         await session.execute(
-            sa.text(
-                "UPDATE plans SET status = 'stale' WHERE id = :pid AND tenant_id = :tid"
-            ),
+            sa.text("UPDATE plans SET status = 'stale' WHERE id = :pid AND tenant_id = :tid"),
             {"pid": str(existing["id"]), "tid": str(tenant_id)},
         )
         return GradPlanMutation(
@@ -674,9 +672,7 @@ async def sync_after_registration(
     )
     if violations:
         await session.execute(
-            sa.text(
-                "UPDATE plans SET status = 'stale' WHERE id = :pid AND tenant_id = :tid"
-            ),
+            sa.text("UPDATE plans SET status = 'stale' WHERE id = :pid AND tenant_id = :tid"),
             {"pid": str(existing["id"]), "tid": str(tenant_id)},
         )
         msg = (
@@ -711,9 +707,7 @@ async def sync_after_registration(
             "tid": str(tenant_id),
             "actor": str(student_id),
             "before": json.dumps({"registered_term": term_label(target_term, target_year)}),
-            "after": json.dumps(
-                {"plan_id": str(existing["id"]), "course_codes": registered_codes}
-            ),
+            "after": json.dumps({"plan_id": str(existing["id"]), "course_codes": registered_codes}),
         },
     )
     card = build_grad_plan_card(

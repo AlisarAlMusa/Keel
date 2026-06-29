@@ -36,9 +36,7 @@ def test_wrapping_preserves_count_and_names() -> None:
 
 
 def test_tool_without_coroutine_passes_through_unchanged() -> None:
-    sync_tool = StructuredTool.from_function(
-        func=lambda x: x, name="sync_only", description="sync"
-    )
+    sync_tool = StructuredTool.from_function(func=lambda x: x, name="sync_only", description="sync")
     (result,) = traced_tools([sync_tool])
     # No async path to wrap → the original object is returned as-is.
     assert result is sync_tool

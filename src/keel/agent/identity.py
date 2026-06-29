@@ -51,9 +51,7 @@ def set_request_identity(
     Returns a reset token.
     """
     return _identity.set(
-        RequestIdentity(
-            tenant_id=str(tenant_id), student_id=str(student_id), thread_id=thread_id
-        )
+        RequestIdentity(tenant_id=str(tenant_id), student_id=str(student_id), thread_id=thread_id)
     )
 
 

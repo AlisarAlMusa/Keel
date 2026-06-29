@@ -104,9 +104,7 @@ class StageWaitlistJoinInput(BaseModel):
         default=None,
         description="Term of the section: fall, spring, or summer. Use the student's current term.",
     )
-    year: int | None = Field(
-        default=None, description="Calendar year of the term, e.g. 2026."
-    )
+    year: int | None = Field(default=None, description="Calendar year of the term, e.g. 2026.")
     section_id: str | None = Field(
         default=None,
         description=(
@@ -132,9 +130,7 @@ class ListFullSectionsInput(BaseModel):
 
     student_id: str = Field(description="The student's UUID — copy from the system prompt.")
     tenant_id: str = Field(description="The tenant's UUID — copy from the system prompt.")
-    course_code: str = Field(
-        description="Course code to list full sections for, e.g. 'CS301'."
-    )
+    course_code: str = Field(description="Course code to list full sections for, e.g. 'CS301'.")
     term: str | None = Field(
         default=None,
         description="Term to look in: fall, spring, or summer. Use the student's current term.",
@@ -387,8 +383,11 @@ def make_enrollment_tools(deps: AgentDeps) -> list[Any]:
                     # waitlist). Otherwise every section is full: pick the only one, or — if
                     # there are several — make the agent ask which the student wants.
                     if await _any_open_seat(
-                        session, tenant_id=tenant_id, course_code=course_code,
-                        term=term_l, year=year,
+                        session,
+                        tenant_id=tenant_id,
+                        course_code=course_code,
+                        term=term_l,
+                        year=year,
                     ):
                         return ToolError(
                             error=(
@@ -401,8 +400,11 @@ def make_enrollment_tools(deps: AgentDeps) -> list[Any]:
                             category="validation",
                         ).model_dump_json()
                     full = await _full_sections_for_course(
-                        session, tenant_id=tenant_id, course_code=course_code,
-                        term=term_l, year=year,
+                        session,
+                        tenant_id=tenant_id,
+                        course_code=course_code,
+                        term=term_l,
+                        year=year,
                     )
                     if not full:
                         return ToolError(
@@ -457,9 +459,7 @@ def make_enrollment_tools(deps: AgentDeps) -> list[Any]:
                 else "You will be notified when a seat opens; no automatic enrollment."
             )
             section_phrase = (
-                f"{course_code} ({instructor_label}'s section)"
-                if instructor_label
-                else course_code
+                f"{course_code} ({instructor_label}'s section)" if instructor_label else course_code
             )
             return json.dumps(
                 {
@@ -507,14 +507,20 @@ def make_enrollment_tools(deps: AgentDeps) -> list[Any]:
                     session, tenant_id=tenant_id, student_id=student_id, term=term_l, year=year
                 )
                 full = await _full_sections_for_course(
-                    session, tenant_id=tenant_id, course_code=course_code,
-                    term=term_l, year=year,
+                    session,
+                    tenant_id=tenant_id,
+                    course_code=course_code,
+                    term=term_l,
+                    year=year,
                 )
                 if not full:
                     # Distinguish "open (enroll instead)" from "not offered this term".
                     if await _any_open_seat(
-                        session, tenant_id=tenant_id, course_code=course_code,
-                        term=term_l, year=year,
+                        session,
+                        tenant_id=tenant_id,
+                        course_code=course_code,
+                        term=term_l,
+                        year=year,
                     ):
                         return (
                             f"{course_code} is NOT full — it has open seats this term. "
@@ -525,9 +531,7 @@ def make_enrollment_tools(deps: AgentDeps) -> list[Any]:
                         "waitlist. Suggest a term when it is offered."
                     )
 
-                when = (
-                    f"{term.title()} {year}" if term and year is not None else "this term"
-                )
+                when = f"{term.title()} {year}" if term and year is not None else "this term"
                 lines = [f"Full sections of {course_code} ({when}) — choose one to waitlist:"]
                 for sec in full:
                     instr = sec["instructor"] or "TBA"
@@ -919,8 +923,7 @@ async def _default_term_year(
         return term, year
     row = await session.execute(
         sa.text(
-            "SELECT current_term, current_year FROM students "
-            "WHERE id = :sid AND tenant_id = :tid"
+            "SELECT current_term, current_year FROM students WHERE id = :sid AND tenant_id = :tid"
         ),
         {"sid": str(student_id), "tid": str(tenant_id)},
     )

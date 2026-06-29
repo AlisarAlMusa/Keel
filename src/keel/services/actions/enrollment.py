@@ -154,8 +154,7 @@ async def execute_enrollment_tx(
             # of inserting (the unique idempotency_key would reject a fresh INSERT).
             await session.execute(
                 sa.text(
-                    "UPDATE enrollments SET status = 'enrolled', source = 'keel' "
-                    "WHERE id = :eid"
+                    "UPDATE enrollments SET status = 'enrolled', source = 'keel' WHERE id = :eid"
                 ),
                 {"eid": str(prior_row["id"])},
             )
@@ -185,8 +184,7 @@ async def execute_enrollment_tx(
         # Increment section.enrolled — safe under the FOR UPDATE lock above.
         await session.execute(
             sa.text(
-                "UPDATE sections SET enrolled = enrolled + 1 "
-                "WHERE id = :secid AND tenant_id = :tid"
+                "UPDATE sections SET enrolled = enrolled + 1 WHERE id = :secid AND tenant_id = :tid"
             ),
             {"secid": str(section_id), "tid": str(tenant_id)},
         )

@@ -119,9 +119,7 @@ def make_guidance_tools(deps: AgentDeps) -> list[Any]:
             # Pass CODE — Name (not bare codes) so the model can recognise what each course
             # IS (e.g. CS360 = Introduction to Artificial Intelligence) and rank by real
             # relevance to the stated career — otherwise it ranks opaque codes by guesswork.
-            elig_display = [
-                f"{c} — {catalog[c].name}" if c in catalog else c for c in eligible_set
-            ]
+            elig_display = [f"{c} — {catalog[c].name}" if c in catalog else c for c in eligible_set]
             prompt = e1_elective_rank_prompt.build(
                 eligible_electives=elig_display,
                 strengths=_strengths(transcript, catalog),
