@@ -281,7 +281,6 @@ function PlanCard({
               </span>
             </div>
             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-              {course.requirement && <Badge variant="active" label={course.requirement} />}
               <Badge variant="via-keel" label={`${course.credits} cr`} />
             </div>
           </div>
@@ -495,7 +494,6 @@ function SectionOptionsView({
                   </span>
                 </span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                  {it.requirement && <Badge variant="active" label={it.requirement} />}
                   {typeof it.credits === 'number' && <Badge variant="via-keel" label={`${it.credits} cr`} />}
                   <span style={{ color: 'rgba(0,4,53,0.55)' }}>{it.seats} seats</span>
                 </span>
@@ -631,7 +629,6 @@ function GradPlanView({
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                  {course.requirement && <Badge variant="active" label={course.requirement} />}
                   <Badge variant="via-keel" label={`${course.credits} cr`} />
                 </div>
               </div>
@@ -720,6 +717,7 @@ function MessageBubble({
       >
         {!isStudent && <KeelAvatar />}
         <div
+          dir="auto"
           style={{
             maxWidth: '80%',
             background: isStudent ? 'var(--steel)' : 'var(--moonlight)',
@@ -731,6 +729,7 @@ function MessageBubble({
             color: isStudent ? 'var(--moonlight)' : 'var(--oxford)',
             fontSize: 'var(--text-sm)',
             lineHeight: 1.55,
+            textAlign: 'start',
             boxShadow: isStudent ? 'none' : '0 2px 12px rgba(0,4,53,0.18)',
           }}
         >
