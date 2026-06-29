@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import jwt
@@ -155,17 +156,19 @@ def test_disallowed_origin_returns_403() -> None:
     # Test verify_origin_or_403 directly
     from fastapi import HTTPException
 
-    # Build a minimal request mock
+    # Build a minimal request mock. keel-api's own served origin is keel-api.test;
+    # the cross-origin attacker therefore doesn't short-circuit on same-origin.
     class FakeRequest:
         def __init__(self, origin: str, app_state: object) -> None:
-            self.headers = {"origin": origin}
+            self.headers = {"origin": origin, "host": "keel-api.test"}
+            self.url = SimpleNamespace(scheme="https")
             self.app = MagicMock()
             self.app.state = MagicMock()
             self.app.state.widget_origins_map = origins_map
 
     fake_request = FakeRequest("https://attacker.example.com", app.state)
     with pytest.raises(HTTPException) as exc_info:
-        verify_origin_or_403(fake_request, _TENANT_A)  # type: ignore[arg-type]
+        verify_origin_or_403(fake_request, _TENANT_A)
     assert exc_info.value.status_code == 403
 
 
@@ -174,26 +177,28 @@ def test_allowed_origin_passes() -> None:
 
     class FakeRequest:
         def __init__(self) -> None:
-            self.headers = {"origin": "https://allowed.uni.edu"}
+            self.headers = {"origin": "https://allowed.uni.edu", "host": "keel-api.test"}
+            self.url = SimpleNamespace(scheme="https")
             self.app = MagicMock()
             self.app.state = MagicMock()
             self.app.state.widget_origins_map = origins_map
 
     # Should not raise
-    verify_origin_or_403(FakeRequest(), _TENANT_A)  # type: ignore[arg-type]
+    verify_origin_or_403(FakeRequest(), _TENANT_A)
 
 
 def test_no_configured_origins_allows_all() -> None:
     """Dev mode: empty allowed list → any origin passes (fail-open for dev)."""
 
     class FakeRequest:
-        headers = {"origin": "http://localhost:3000"}
+        headers = {"origin": "http://localhost:3000", "host": "keel-api.test"}
+        url = SimpleNamespace(scheme="https")
         app = MagicMock()
         app.state = MagicMock()
         app.state.widget_origins_map = {}  # empty — dev mode
 
     # Should not raise
-    verify_origin_or_403(FakeRequest(), _TENANT_A)  # type: ignore[arg-type]
+    verify_origin_or_403(FakeRequest(), _TENANT_A)
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +266,15 @@ def test_internal_mint_wrong_secret_returns_401() -> None:
     assert resp.status_code == 401
 
 
-def test_internal_mint_correct_secret_returns_token() -> None:
+def test_internal_mint_correct_secret_returns_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The mint route adds a defence-in-depth DB check that the student belongs to
+    # the tenant (its own concern, covered elsewhere). This test exercises the
+    # service-secret boundary, so stub that lookup to keep it DB-free.
+    async def _ok(request: object, tenant_id: str, student_id: str) -> None:
+        return None
+
+    monkeypatch.setattr("keel.api.routers.internal._assert_student_in_tenant", _ok)
+
     app = _make_app()
     client = TestClient(app)
     resp = client.post(
