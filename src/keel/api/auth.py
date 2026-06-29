@@ -127,20 +127,33 @@ async def get_widget_context(
 
 
 def verify_origin_or_403(request: Request, tenant_id: str) -> None:
-    """Raise 403 if the request Origin is not in the tenant's allowed list.
+    """Raise 403 if the request Origin is not allowed for this tenant.
 
-    If the tenant has no configured origins (dev / first-boot), allow all
-    origins so the demo works out of the box.  Production tenants MUST configure
-    allowed_origins via PUT /admin/widget-config.
+    Origin model (reconciles SPEC §11 with the same-origin-iframe design of
+    D-P5-003):
+      • The widget iframe is served from keel-api, so /chat and /actions calls are
+        SAME-ORIGIN as keel-api — those are always allowed (the request can only
+        originate from our own served iframe, and the verified JWT is the boundary).
+      • A cross-origin request must present an Origin in the tenant's configured
+        allowlist (the portal origins). This is what rejects a token replayed from
+        another tenant's / a malicious site's page.
+      • If the tenant has no configured origins (dev / first-boot), allow all so the
+        demo works out of the box. Production tenants configure allowed_origins.
+    A missing Origin header (e.g. same-origin GET) is treated as same-origin.
     """
     origin = request.headers.get("origin")
-    allowed = _allowed_origins_for(request, tenant_id)
 
+    # Same-origin as keel-api (the served widget iframe) → always allowed.
+    server_origin = f"{request.url.scheme}://{request.headers.get('host', '')}"
+    if not origin or origin == server_origin:
+        return
+
+    allowed = _allowed_origins_for(request, tenant_id)
     if not allowed:
         # No configured origins → dev mode, allow all.
         return
 
-    if not origin or origin not in allowed:
+    if origin not in allowed:
         _log.warning("origin_rejected", origin=origin, tenant_id=tenant_id)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -157,24 +170,25 @@ async def db_with_tenant(
     ctx: WidgetContext = Depends(get_widget_context),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
 ) -> AsyncIterator[AsyncSession]:
-    """Open a DB session and SET LOCAL app.tenant_id for RLS enforcement.
+    """Open a DB session bound to the request's tenant for RLS enforcement.
 
-    set_config(..., is_local=true) scopes to the current transaction and
-    auto-resets at commit/rollback; the explicit reset is belt-and-suspenders
-    for pooled connections in autocommit mode.
+    The binding MUST share one transaction with the handler's queries: ``SET
+    LOCAL`` (``set_config(..., is_local=true)``) lives only for the current
+    transaction, so setting it outside an explicit transaction risks the value
+    being scoped to its own implicit statement-transaction and silently absent
+    for the handler's subsequent reads — which makes RLS fail *closed* (0 rows).
+    Opening ``session.begin()`` first guarantees the tenant context and every
+    query under it run in the same transaction; the setting auto-resets on
+    commit/rollback, so no manual reset is needed. This mirrors
+    ``infra.database.session.tenant_session`` (the proven write-path helper).
     """
     async with session_factory() as session:
-        await session.execute(
-            text("SELECT set_config('app.tenant_id', :tid, true)"),
-            {"tid": str(ctx.tenant_id)},
-        )
-        try:
+        async with session.begin():
+            await session.execute(
+                text("SELECT set_config('app.tenant_id', :tid, true)"),
+                {"tid": str(ctx.tenant_id)},
+            )
             yield session
-        finally:
-            try:
-                await session.execute(text("SELECT set_config('app.tenant_id', '', true)"))
-            except Exception:  # noqa: BLE001 — best-effort reset; session may be closed
-                pass
 
 
 # ---------------------------------------------------------------------------

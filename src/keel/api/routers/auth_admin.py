@@ -152,7 +152,6 @@ def require_role(role: str):  # type: ignore[no-untyped-def]
 
     async def _dep(
         request: Request,
-        authorization: str | None = None,
     ) -> AdminContext:
         auth = request.headers.get("Authorization", "")
         if not auth:

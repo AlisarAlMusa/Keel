@@ -22,7 +22,12 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from keel.logging import get_logger
-from keel.services.actions import ActionRepo, audit_write, outbox_write
+from keel.services.actions import (
+    ActionRepo,
+    audit_write,
+    notify_context,
+    outbox_write,
+)
 
 _log = get_logger(__name__)
 
@@ -94,7 +99,8 @@ async def join_waitlist_tx(
     )
     waitlist_id = UUID(str(wl_row.scalar_one()))
 
-    # Outbox — confirmation email.
+    # Outbox — confirmation email (enriched for a real-world message).
+    ctx = await notify_context(session, section_id=section_id, student_id=student_id)
     await outbox_write(
         session,
         tenant_id=tenant_id,
@@ -106,6 +112,7 @@ async def join_waitlist_tx(
             "auto_enroll": auto_enroll,
             "position": position,
             "action_id": str(action_id),
+            **ctx,
         },
     )
 
@@ -175,6 +182,7 @@ async def leave_waitlist_tx(
 
     waitlist_id = UUID(str(row[0]))
 
+    ctx = await notify_context(session, section_id=section_id, student_id=student_id)
     await outbox_write(
         session,
         tenant_id=tenant_id,
@@ -184,6 +192,7 @@ async def leave_waitlist_tx(
             "section_id": str(section_id),
             "waitlist_id": str(waitlist_id),
             "action_id": str(action_id),
+            **ctx,
         },
     )
 
@@ -224,33 +233,73 @@ async def fulfill_waitlist_tx(
     Re-verification (engine) is the CALLER's responsibility before this function.
     This function only writes the enrollment + marks waitlist fulfilled.
     """
-    idempotency_key = f"waitlist-fulfill:{student_id}:{section_id}"
+    # Reuse the SAME idempotency key as a direct enrollment so a (student, section) can
+    # never exist as two rows — a dropped "enroll:" row plus a separate "waitlist-fulfill:"
+    # row. Both write paths now key on enroll:{student}:{section}.
+    idempotency_key = f"enroll:{student_id}:{section_id}"
 
-    enroll_row = await session.execute(
+    # Lock the section row and re-check capacity so a concurrent enrollment can't
+    # let the seat-fill overbook (the worker re-verifies before calling this, but
+    # the lock makes the write atomic with respect to other writers).
+    cap_row = await session.execute(
         sa.text(
-            "INSERT INTO enrollments "
-            "(tenant_id, student_id, section_id, status, idempotency_key) "
-            "VALUES (:tid, :sid, :secid, 'enrolled', :ikey) "
-            "ON CONFLICT DO NOTHING RETURNING id"
+            "SELECT capacity, enrolled FROM sections "
+            "WHERE id = :secid AND tenant_id = :tid FOR UPDATE"
         ),
-        {
-            "tid": str(tenant_id),
-            "sid": str(student_id),
-            "secid": str(section_id),
-            "ikey": idempotency_key,
-        },
+        {"secid": str(section_id), "tid": str(tenant_id)},
     )
-    enroll_id = enroll_row.scalar_one_or_none()
-    if not enroll_id:
+    cap = cap_row.mappings().first()
+    if cap is None or int(cap["enrolled"]) >= int(cap["capacity"]):
+        return WaitlistResult(
+            success=False, waitlist_id=waitlist_id, message="Section is no longer available."
+        )
+
+    # Reactivate an existing dropped row, or insert a fresh one — never duplicate. The
+    # section counter is bumped only when the student newly holds the seat (new insert or
+    # reactivated drop), not when they were already enrolled.
+    existing = await session.execute(
+        sa.text(
+            "SELECT id, status FROM enrollments "
+            "WHERE tenant_id = :tid AND student_id = :sid AND section_id = :secid"
+        ),
+        {"tid": str(tenant_id), "sid": str(student_id), "secid": str(section_id)},
+    )
+    prior = existing.mappings().first()
+    if prior and prior["status"] == "enrolled":
         return WaitlistResult(
             success=False, waitlist_id=waitlist_id, message="Already enrolled (idempotent)."
         )
+    if prior:  # a prior 'dropped' row → reactivate it (the unique key forbids re-insert)
+        await session.execute(
+            sa.text("UPDATE enrollments SET status = 'enrolled', source = 'keel' WHERE id = :eid"),
+            {"eid": str(prior["id"])},
+        )
+        enroll_id = prior["id"]
+    else:
+        enroll_row = await session.execute(
+            sa.text(
+                "INSERT INTO enrollments "
+                "(tenant_id, student_id, section_id, status, idempotency_key, source) "
+                "VALUES (:tid, :sid, :secid, 'enrolled', :ikey, 'keel') "
+                "ON CONFLICT DO NOTHING RETURNING id"
+            ),
+            {
+                "tid": str(tenant_id),
+                "sid": str(student_id),
+                "secid": str(section_id),
+                "ikey": idempotency_key,
+            },
+        )
+        enroll_id = enroll_row.scalar_one_or_none()
+        if not enroll_id:
+            return WaitlistResult(
+                success=False, waitlist_id=waitlist_id, message="Already enrolled (idempotent)."
+            )
 
-    # Increment enrolled counter.
+    # Increment enrolled counter — safe under the FOR UPDATE lock above.
     await session.execute(
         sa.text(
-            "UPDATE sections SET enrolled = enrolled + 1 "
-            "WHERE id = :secid AND tenant_id = :tid AND enrolled < capacity"
+            "UPDATE sections SET enrolled = enrolled + 1 WHERE id = :secid AND tenant_id = :tid"
         ),
         {"secid": str(section_id), "tid": str(tenant_id)},
     )
@@ -261,6 +310,7 @@ async def fulfill_waitlist_tx(
         {"wid": str(waitlist_id), "tid": str(tenant_id)},
     )
 
+    ctx = await notify_context(session, section_id=section_id, student_id=student_id)
     await outbox_write(
         session,
         tenant_id=tenant_id,
@@ -269,6 +319,7 @@ async def fulfill_waitlist_tx(
             "student_id": str(student_id),
             "section_id": str(section_id),
             "waitlist_id": str(waitlist_id),
+            **ctx,
         },
     )
 

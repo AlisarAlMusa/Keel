@@ -247,7 +247,9 @@ async def suspend_tenant(
         if not row:
             raise HTTPException(status_code=404, detail="Tenant not found")
         row.status = "suspended"
-        await _write_audit(session, ctx.user_id, "suspend", str(tenant_id))
+        await _write_audit(
+            session, ctx.user_id, "suspend", str(tenant_id), {"tenant_name": row.name}
+        )
 
     _log.info("platform.suspend", tenant_id=str(tenant_id))
     return SuspendResponse(tenant_id=str(tenant_id), status="suspended")
@@ -270,7 +272,9 @@ async def unsuspend_tenant(
         if not row:
             raise HTTPException(status_code=404, detail="Tenant not found")
         row.status = "active"
-        await _write_audit(session, ctx.user_id, "unsuspend", str(tenant_id))
+        await _write_audit(
+            session, ctx.user_id, "unsuspend", str(tenant_id), {"tenant_name": row.name}
+        )
 
     _log.info("platform.unsuspend", tenant_id=str(tenant_id))
     return SuspendResponse(tenant_id=str(tenant_id), status="active")

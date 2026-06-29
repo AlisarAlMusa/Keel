@@ -3,17 +3,23 @@
 POST /actions/{action_id}/approve
 POST /actions/{action_id}/reject
 
-Safety model (spec §1 / plan.md §1.3):
-  Layer 1 (tenant): action lookup via RLS-scoped session.
-                    Cross-tenant action_id → 404, leaking nothing.
-  Layer 2 (student): assert action.student_id == current_user.id.
+Safety model (spec §8 / §11 / SECURITY.md §5):
+  Auth:              the verified widget Bearer JWT is the ONLY source of
+                     identity. student_id / tenant_id come from the signed
+                     token — never from a client-supplied header or body.
+  Origin:            verify_origin_or_403 — token from a disallowed Origin → 403.
+  Layer 1 (tenant):  action lookup via RLS-scoped session.
+                     Cross-tenant action_id → 404, leaking nothing.
+  Layer 2 (student): assert action.student_id == token student_id.
                      Student A cannot approve Student B's action → 403.
   Status guard:      action must be 'pending'; else 409.
   Thread-binding:    graph resumes using action.thread_id (written at stage time),
                      NEVER a thread_id from the request.
 
-Auth: Bearer JWT carrying student_id + tenant_id.
-For Phase 3 a lightweight JWT dep is used (same pattern as ENGINEERING_RULES.md §9).
+This endpoint IS the human approval gate for every staged write — so its
+identity must be cryptographically verified, exactly like /chat. The previous
+X-Student-Id / X-Tenant-Id header scheme is removed: it both (a) trusted
+spoofable plaintext headers and (b) never matched what the widget sends.
 """
 
 from __future__ import annotations
@@ -22,8 +28,9 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from keel.api.auth import WidgetContext, get_widget_context, verify_origin_or_403
 from keel.infra.database.session import tenant_session
 from keel.logging import get_logger
 from keel.services.actions import ActionRepo
@@ -33,13 +40,22 @@ _log = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Auth dependency — lightweight JWT (Bearer token carries student_id + tenant_id)
+# Auth dependency — the verified widget JWT (same dependency /chat uses)
 # ---------------------------------------------------------------------------
 
 
-class CurrentUser(BaseModel):
-    student_id: str
-    tenant_id: str
+async def _get_current_user(
+    request: Request,
+    ctx: Annotated[WidgetContext, Depends(get_widget_context)],
+) -> WidgetContext:
+    """Identity from the verified widget Bearer JWT + tenant origin check.
+
+    ``get_widget_context`` validates signature, expiry, audience, and required
+    claims; ``verify_origin_or_403`` enforces the tenant's Origin allowlist.
+    A valid token from a disallowed Origin is rejected (SECURITY.md §3.1).
+    """
+    verify_origin_or_403(request, ctx.tenant_id)
+    return ctx
 
 
 def _get_session_factory(request: Request) -> Any:
@@ -51,23 +67,6 @@ def _get_agent(request: Request) -> Any:
     return getattr(request.app.state, "compiled_agent", None)
 
 
-async def _get_current_user(request: Request) -> CurrentUser:
-    """Decode the Bearer token from Authorization header.
-
-    Phase 3: we validate the token by reading student_id + tenant_id from
-    the X-Student-Id / X-Tenant-Id headers (signed widget token exchange is
-    wired in Phase 5).  Return 401 if missing.
-    """
-    student_id = request.headers.get("X-Student-Id")
-    tenant_id = request.headers.get("X-Tenant-Id")
-    if not student_id or not tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing X-Student-Id or X-Tenant-Id headers.",
-        )
-    return CurrentUser(student_id=student_id, tenant_id=tenant_id)
-
-
 # ---------------------------------------------------------------------------
 # Response schema
 # ---------------------------------------------------------------------------
@@ -77,6 +76,7 @@ class ActionDecisionResponse(BaseModel):
     action_id: str
     status: str
     message: str
+    plans: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ class ActionDecisionResponse(BaseModel):
 async def approve_action(
     action_id: str,
     request: Request,
-    current_user: Annotated[CurrentUser, Depends(_get_current_user)],
+    current_user: Annotated[WidgetContext, Depends(_get_current_user)],
 ) -> ActionDecisionResponse:
     """Approve a pending staged action and resume the agent graph.
 
@@ -131,6 +131,7 @@ async def approve_action(
         # ---- All checks passed — approve --------------------------------
         await ActionRepo.set_approved(session, action_uuid)
         thread_id: str = str(action["thread_id"])
+        action_type: str = str(action["type"])
         # session commits on context-manager exit
 
     _log.info(
@@ -141,17 +142,37 @@ async def approve_action(
         tenant_id=current_user.tenant_id,
     )
 
+    # Type-aware fallback message (an enrollment is NOT a registrar-queue request).
+    _is_request = action_type in ("graduation", "major_change", "petition")
+    result_message = (
+        "Your request was filed — the registrar will review it and you'll be notified."
+        if _is_request
+        else "Done — your action has been completed."
+    )
+
     # ---- Resume the suspended LangGraph thread --------------------------
-    # thread_id comes from the action row — never from the request.
+    # thread_id comes from the action row — never from the request. The resumed graph
+    # runs execute_node (the actual write) and the agent's wrap-up; we surface its real
+    # final message so the widget shows the truth (e.g. "Enrolled in 3 course(s) ✓"),
+    # not a hardcoded one.
     agent = _get_agent(request)
     if agent is not None:
+        from langchain_core.messages import AIMessage
         from langgraph.types import Command
 
         try:
-            await agent.ainvoke(
+            final_state = await agent.ainvoke(
                 Command(resume={"action_id": action_id}),
                 config={"configurable": {"thread_id": thread_id}},
             )
+            from keel.agent.graph import _extract_text
+
+            for msg in reversed(final_state.get("messages", []) if final_state else []):
+                if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
+                    txt = _extract_text(msg.content)  # handles Gemini list-block content
+                    if txt.strip():
+                        result_message = txt.strip()
+                        break
         except Exception as exc:
             _log.error(
                 "actions.approve.resume_failed",
@@ -160,10 +181,27 @@ async def approve_action(
             )
             # Don't surface internal errors; the action is already approved.
 
+    plans: list[dict[str, Any]] = []
+    if action_type == "enrollment":
+        try:
+            from keel.services.grad_plans import load_active_grad_plan
+
+            async with tenant_session(session_factory, UUID(current_user.tenant_id)) as session:
+                loaded = await load_active_grad_plan(
+                    session,
+                    tenant_id=UUID(current_user.tenant_id),
+                    student_id=UUID(current_user.student_id),
+                )
+            if loaded and loaded.card:
+                plans.append(loaded.card)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("actions.approve.load_synced_grad_plan_failed", error=str(exc))
+
     return ActionDecisionResponse(
         action_id=action_id,
         status="approved",
-        message="Action approved. Enrollment is being processed.",
+        message=result_message,
+        plans=plans,
     )
 
 
@@ -180,7 +218,7 @@ async def approve_action(
 async def reject_action(
     action_id: str,
     request: Request,
-    current_user: Annotated[CurrentUser, Depends(_get_current_user)],
+    current_user: Annotated[WidgetContext, Depends(_get_current_user)],
 ) -> ActionDecisionResponse:
     """Reject a pending staged action; resume so the agent can re-plan or close."""
     session_factory = _get_session_factory(request)

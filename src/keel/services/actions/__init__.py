@@ -12,7 +12,6 @@ that calls audit_write + outbox_write inside the same transaction.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -23,6 +22,75 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from keel.logging import get_logger
 
 _log = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Notification context — real-world, human-readable details for emails / alerts
+# ---------------------------------------------------------------------------
+
+
+def fmt_slots(slots: object) -> str:
+    """Render meeting slots like 'Tue/Thu 10:00 AM–11:15 AM' for a notification body."""
+    if not slots or not isinstance(slots, list):
+        return ""
+
+    def _hm(mins: int) -> str:
+        h, m = divmod(int(mins), 60)
+        ampm = "AM" if h < 12 else "PM"
+        return f"{h % 12 or 12}:{m:02d} {ampm}"
+
+    ordered = sorted(slots, key=lambda s: (int(s["start_min"]), str(s["day"])))
+    days = "/".join(str(s["day"]).capitalize() for s in ordered)
+    return f"{days} {_hm(ordered[0]['start_min'])}–{_hm(ordered[0]['end_min'])}"
+
+
+def section_label(ctx: dict[str, str]) -> str:
+    """A human section descriptor: 'the Tue/Thu 10:00 AM–11:15 AM section with Prof. Nasser'."""
+    when = ctx.get("when") or ""
+    instr = ctx.get("instructor") or ""
+    if when and instr:
+        return f"the {when} section with {instr}"
+    if when:
+        return f"the {when} section"
+    if instr:
+        return f"the section with {instr}"
+    return "the section"
+
+
+async def notify_context(
+    session: AsyncSession, *, section_id: UUID, student_id: UUID
+) -> dict[str, str]:
+    """Human-readable details for a notification: student name, course, instructor, time.
+
+    Best-effort — missing pieces fall back to friendly placeholders so a real-world
+    email never shows a raw UUID. Shared by the action services and the worker.
+    """
+    sec = await session.execute(
+        sa.text(
+            "SELECT sec.course_code, sec.instructor, sec.slots, c.name AS course_name "
+            "FROM sections sec "
+            "LEFT JOIN courses c "
+            "  ON c.tenant_id = sec.tenant_id AND c.code = sec.course_code "
+            "WHERE sec.id = :secid"
+        ),
+        {"secid": str(section_id)},
+    )
+    s = sec.mappings().first()
+    name_row = await session.execute(
+        sa.text(
+            "SELECT u.display_name FROM students st "
+            "JOIN users u ON u.id = st.user_id WHERE st.id = :sid"
+        ),
+        {"sid": str(student_id)},
+    )
+    student_name = name_row.scalar_one_or_none()
+    return {
+        "student_name": student_name or "there",
+        "course_code": str(s["course_code"]) if s else "your course",
+        "course_name": str(s["course_name"] or "") if s else "",
+        "instructor": str(s["instructor"] or "the instructor") if s else "the instructor",
+        "when": fmt_slots(s["slots"]) if s else "",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -62,23 +130,15 @@ class ActionRepo:
         action_type: str,
         payload: dict[str, Any],
     ) -> UUID:
-        """Insert a pending action row and return its id."""
-        row = await session.execute(
-            sa.text(
-                "INSERT INTO actions "
-                "(tenant_id, student_id, thread_id, type, payload, status) "
-                "VALUES (:tid, :sid, :thread, :atype, CAST(:payload AS jsonb), 'pending') "
-                "RETURNING id"
-            ),
-            {
-                "tid": str(tenant_id),
-                "sid": str(student_id),
-                "thread": thread_id,
-                "atype": action_type,
-                "payload": json.dumps(payload),
-            },
+        """Insert a pending action row and return its id (via ActionsRepository)."""
+        from keel.repositories.core import ActionsRepository
+
+        return await ActionsRepository(session, tenant_id).insert_pending(
+            student_id=student_id,
+            thread_id=thread_id,
+            action_type=action_type,
+            payload=payload,
         )
-        return UUID(str(row.scalar_one()))
 
     @staticmethod
     async def set_approved(session: AsyncSession, action_id: UUID) -> None:
@@ -106,9 +166,10 @@ class ActionRepo:
     async def set_executed(
         session: AsyncSession,
         action_id: UUID,
-        audit_ref: int,
+        audit_ref: int | None = None,
     ) -> None:
-        """Transition approved → executed; set audit_ref."""
+        """Transition approved → executed; set audit_ref (NULL when the write's
+        own audit row id isn't threaded back, e.g. institutional filings)."""
         await session.execute(
             sa.text(
                 "UPDATE actions SET status = 'executed', audit_ref = :ref "
@@ -132,20 +193,10 @@ class ActionRepo:
         tenant_id: UUID,
         older_than: datetime,
     ) -> int:
-        """Expire all pending actions older than older_than for a tenant. Returns count."""
-        result = await session.execute(
-            sa.text(
-                "UPDATE actions SET status = 'expired', decided_at = :now "
-                "WHERE tenant_id = :tid AND status = 'pending' AND created_at < :cutoff "
-                "RETURNING id"
-            ),
-            {
-                "tid": str(tenant_id),
-                "now": datetime.now(UTC),
-                "cutoff": older_than,
-            },
-        )
-        return len(result.fetchall())
+        """Expire all pending actions older than older_than (via ActionsRepository)."""
+        from keel.repositories.core import ActionsRepository
+
+        return await ActionsRepository(session, tenant_id).expire_stale(older_than=older_than)
 
 
 # ---------------------------------------------------------------------------
@@ -162,22 +213,15 @@ async def audit_write(
     before: dict[str, Any] | None,
     after: dict[str, Any] | None,
 ) -> int:
-    """Insert one audit_log row and return its id (for action.audit_ref)."""
-    row = await session.execute(
-        sa.text(
-            "INSERT INTO audit_log (tenant_id, actor, action, before, after) "
-            "VALUES (:tid, :actor, :action, CAST(:before AS jsonb), CAST(:after AS jsonb)) "
-            "RETURNING id"
-        ),
-        {
-            "tid": str(tenant_id),
-            "actor": actor,
-            "action": action,
-            "before": json.dumps(before) if before is not None else None,
-            "after": json.dumps(after) if after is not None else None,
-        },
+    """Insert one audit_log row and return its id (for action.audit_ref).
+
+    Delegates to the tenant-scoped ``LedgerRepository`` (defense-in-depth layer 2).
+    """
+    from keel.repositories.core import LedgerRepository
+
+    return await LedgerRepository(session, tenant_id).write_audit(
+        actor=actor, action=action, before=before, after=after
     )
-    return int(row.scalar_one())
 
 
 async def outbox_write(
@@ -191,19 +235,10 @@ async def outbox_write(
 
     Called inside the same transaction as the domain write — the outbox row is
     the owed-work ledger entry that guarantees the side effect fires even across
-    crashes (no dual-write inconsistency).
+    crashes (no dual-write inconsistency). Delegates to ``LedgerRepository``.
     """
-    row = await session.execute(
-        sa.text(
-            "INSERT INTO outbox (tenant_id, kind, event_type, payload, processed) "
-            "VALUES (:tid, :kind, :etype, CAST(:payload AS jsonb), false) "
-            "RETURNING id"
-        ),
-        {
-            "tid": str(tenant_id),
-            "kind": event_type,
-            "etype": event_type,
-            "payload": json.dumps(payload),
-        },
+    from keel.repositories.core import LedgerRepository
+
+    return await LedgerRepository(session, tenant_id).write_outbox(
+        event_type=event_type, payload=payload
     )
-    return UUID(str(row.scalar_one()))
