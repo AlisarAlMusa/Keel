@@ -31,6 +31,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable
 
+from keel.agent.result import AgentResult
 from keel.domain.schemas import ContextEnvelope, RouterResult
 from keel.infra.model_client import ModelClient
 from keel.logging import get_logger
@@ -52,15 +53,17 @@ _STUB_RESPONSE = (
 )
 
 _CHITCHAT_SYSTEM = (
-    "You are a helpful university assistant. "
+    "You are {name}, a helpful university academic assistant. "
+    "If asked who or what you are (or for your name), answer DIRECTLY and immediately: "
+    "'I am {name}, an AI academic co-pilot for this university.' Do NOT start with a "
+    "disclaimer such as 'I do not have a personal name' — your name IS {name}. "
+    "Never say you are a language model or name any AI company. "
     "Answer the student's question concisely. "
     "If it is not related to university topics, politely redirect."
 )
 _CHITCHAT_FALLBACK = "I'm here to help with your courses and registration. What can I do for you?"
 
-_STUB_LABELS = {
-    "my_info",
-}
+_STUB_LABELS: set[str] = set()
 
 # Labels that go directly to the agent (not stubs, not direct-LLM).
 # Phase 4: grad_apply, major_change, escalate, petition now have agent tools (F1-F4).
@@ -77,6 +80,7 @@ _AGENT_LABELS = {
     "grad_apply",
     "major_change",
     "escalate",
+    "my_info",
 }
 
 # Labels that use the lite LLM directly.
@@ -117,6 +121,10 @@ class RouterResponse:
     confidence: float
     routed_to_agent: bool
     text: str
+    action_id: str | None = None
+    pending_approval: bool = False
+    # G3: structured plan cards (widget PlanData) from propose_plan, if any.
+    plans: list[dict[str, Any]] = field(default_factory=list)
     router_result: RouterResult = field(init=False)
 
     def __post_init__(self) -> None:
@@ -135,13 +143,13 @@ class RouterResponse:
 async def _handle_lite(
     message: str,
     llm_lite: Any,
+    persona_name: str = "Keel",
 ) -> str:
     """Call the lite LLM with a 50-token cap.  Returns canned response on failure."""
     try:
         llm = llm_lite.bind(max_output_tokens=50)
-        result = await llm.ainvoke(
-            [SystemMessage(content=_CHITCHAT_SYSTEM), HumanMessage(content=message)]
-        )
+        system = _CHITCHAT_SYSTEM.format(name=persona_name or "Keel")
+        result = await llm.ainvoke([SystemMessage(content=system), HumanMessage(content=message)])
         content = result.content
         if isinstance(content, list):
             text = " ".join(
@@ -161,8 +169,9 @@ async def _handle_lite(
 # Public router entry point
 # ---------------------------------------------------------------------------
 
-# Type alias for the agent callable injected at T5.
-AgentCallable = Callable[[ContextEnvelope], Coroutine[Any, Any, str]]
+# Type alias for the agent callable injected at T5. Returns a structured result so
+# the staged action_id + pending_approval flag reach the chat response (and widget).
+AgentCallable = Callable[[ContextEnvelope], Coroutine[Any, Any, AgentResult]]
 
 
 async def route(
@@ -199,12 +208,15 @@ async def route(
             tenant_id=envelope.tenant_id,
             session_id=envelope.session_id,
         )
-        text = await _run_agent_or_stub(envelope, agent_run)
+        ar = await _run_agent_or_stub(envelope, agent_run)
         return RouterResponse(
             label="unknown",
             confidence=0.0,
             routed_to_agent=True,
-            text=text,
+            text=ar.text,
+            action_id=ar.action_id,
+            pending_approval=ar.pending_approval,
+            plans=ar.plans,
         )
 
     label, confidence = prediction.label, prediction.confidence
@@ -221,17 +233,35 @@ async def route(
     if confidence < threshold:
         # Low confidence → agent decides.
         _log.info("router.low_confidence_to_agent", label=label, confidence=confidence)
-        text = await _run_agent_or_stub(envelope, agent_run)
-        return RouterResponse(label=label, confidence=confidence, routed_to_agent=True, text=text)
+        ar = await _run_agent_or_stub(envelope, agent_run)
+        return RouterResponse(
+            label=label,
+            confidence=confidence,
+            routed_to_agent=True,
+            text=ar.text,
+            action_id=ar.action_id,
+            pending_approval=ar.pending_approval,
+            plans=ar.plans,
+        )
 
     # High-confidence dispatch.
     if label in _LITE_LABELS:
-        text = await _handle_lite(envelope.message, llm_lite)
+        text = await _handle_lite(
+            envelope.message, llm_lite, getattr(envelope, "persona_name", "Keel")
+        )
         return RouterResponse(label=label, confidence=confidence, routed_to_agent=False, text=text)
 
     if label in _AGENT_LABELS:
-        text = await _run_agent_or_stub(envelope, agent_run)
-        return RouterResponse(label=label, confidence=confidence, routed_to_agent=True, text=text)
+        ar = await _run_agent_or_stub(envelope, agent_run)
+        return RouterResponse(
+            label=label,
+            confidence=confidence,
+            routed_to_agent=True,
+            text=ar.text,
+            action_id=ar.action_id,
+            pending_approval=ar.pending_approval,
+            plans=ar.plans,
+        )
 
     if label in _STUB_LABELS:
         _log.info("router.stub_response", label=label)
@@ -244,18 +274,27 @@ async def route(
 
     # Unknown label (model drift / new labels not yet in config) → agent.
     _log.warning("router.unknown_label", label=label, confidence=confidence)
-    text = await _run_agent_or_stub(envelope, agent_run)
-    return RouterResponse(label=label, confidence=confidence, routed_to_agent=True, text=text)
+    ar = await _run_agent_or_stub(envelope, agent_run)
+    return RouterResponse(
+        label=label,
+        confidence=confidence,
+        routed_to_agent=True,
+        text=ar.text,
+        action_id=ar.action_id,
+        pending_approval=ar.pending_approval,
+    )
 
 
 async def _run_agent_or_stub(
     envelope: ContextEnvelope,
     agent_run: AgentCallable | None,
-) -> str:
+) -> AgentResult:
     if agent_run is not None:
         return await agent_run(envelope)
     # T4 stub — agent not wired yet.
-    return (
-        "I'm processing your request. "
-        "(Agent is being set up — this will return a real answer in the next phase.)"
+    return AgentResult(
+        text=(
+            "I'm processing your request. "
+            "(Agent is being set up — this will return a real answer in the next phase.)"
+        )
     )

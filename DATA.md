@@ -96,6 +96,25 @@ uv run python training/intent/generate_intent_dataset.py
 
 ---
 
+## 1b. Seeded sections & instructors (`scripts/seed.py`)
+
+The structured catalog, sections, and instructor names are **mock/seeded** demo data
+standing in for the SIS (KEEL_BRIEF §6–§7) — not a real institution's records.
+
+- Each course is seeded with **two sections per offered term** (year 2026): a primary
+  meeting pattern and an alternate (some at 8 AM or on Fridays, some intentionally full).
+  This gives the agentic section-selection step real options to reason over against a
+  student's stated preferences ("no 8am, no Fridays") — the LLM proposes a fitting
+  combination and the engine validates it (see
+  `specs/008-phase-5-frontend-widget-auth/registration-section-flow.md`).
+- **Instructor names are synthetic** (`_INSTRUCTORS` in `scripts/seed.py`, e.g.
+  "Dr. Haddad") — invented for the demo, not real people. They carry no signal and are
+  display-only.
+- A few sections are seeded **full** (`CS301` at Northane, `DS210` at Summit) so the
+  "section full → offer waitlist / another term" path is exercised end-to-end.
+
+---
+
 ## 2. Graduation-risk dataset — *to be written (Phase 1, parallel track)*
 
 Will be **synthetic** (allowed per CLAUDE.md §13). This section will document the

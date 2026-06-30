@@ -62,6 +62,7 @@ Phase 0 technical decisions. Most are dictated by `CLAUDE.md` §6 and the consti
 - **Decision**: OTel SDK initialized in lifespan; FastAPI auto-instrumentation; OTLP exporter (degrades gracefully if no collector configured). LangSmith env wired for later LLM tracing. `structlog` emits JSON logs with `event/level/timestamp/service/request_id/trace_id/tenant_id`.
 - **Rationale**: Engineering rules §14/§16 + constitution ("traces and logs are tenant-scoped"). Graceful degradation so missing collector never blocks boot.
 - **Alternatives considered**: stdlib logging only (no structure), Jaeger-specific client (vendor lock) — OTel is vendor-neutral.
+- **Completed later (D-R-014)**: the OTLP exporter now has a target — an all-in-one **Jaeger** backend in compose (UI `:16686`), receiving **vendor-neutral OTLP** (no Jaeger client — the lock-in concern above still holds). Added `instrument_libraries()` (SQLAlchemy + Redis + **httpx**, so DB/cache and the outbound LLM/model-server calls trace), agent spans (`agent.turn` / `agent.llm` / `agent.tool.*` with input/output previews, in `agent/tracing.py`), and the same tracing init in the **worker** entrypoint. `OTEL_EXPORTER_OTLP_ENDPOINT` defaults to `http://jaeger:4317`; empty still degrades gracefully. Previews are capped and `redact()`-ed so spans carry no PII/transcript.
 
 ## R11. CI — GitHub Actions
 

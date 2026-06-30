@@ -101,6 +101,15 @@ async function withTenantTx(client, tenantId, fn) {
   }
 }
 
+// Resolve this portal instance's tenant UUID from its PORTAL_TENANT slug. The
+// `tenants` table has no RLS, so this works as keel_app (NOBYPASSRLS) without any
+// SECURITY DEFINER function — and gives us the tenant to scope every subsequent
+// query with `withTenantTx`. Returns null if the slug is unknown (misconfig).
+async function resolvePortalTenantId(client) {
+  const r = await client.query('SELECT id FROM tenants WHERE slug = $1', [PORTAL_TENANT]);
+  return r.rows.length ? r.rows[0].id : null;
+}
+
 // ── Tenant suspension check ───────────────────────────────────────────────────
 // Checks the Keel tenants table (no RLS on tenants).
 // Returns true if the tenant is active; false if suspended/missing.
@@ -137,10 +146,28 @@ app.get('/api/portal/students', async (_req, res) => {
   let client;
   try {
     client = await pool.connect();
-    const result = await client.query('SELECT * FROM portal_list_students()');
-    // Filter to this portal's tenant
-    const tenantStudents = result.rows.filter(s => s.tenant_slug === PORTAL_TENANT);
-    res.json({ students: tenantStudents });
+    // Resolve this portal's tenant_id (the `tenants` table has no RLS), then read
+    // students RLS-scoped to that tenant. A portal instance always knows its own
+    // tenant (PORTAL_TENANT), so this needs no SECURITY DEFINER / BYPASSRLS path —
+    // the DB returns only this tenant's rows instead of all tenants then an
+    // app-side filter (D-R-015).
+    const portalTenantId = await resolvePortalTenantId(client);
+    if (!portalTenantId) {
+      return res.status(500).json({ error: 'Portal misconfigured' });
+    }
+    const students = await withTenantTx(client, portalTenantId, async (c) => {
+      const r = await c.query(
+        `SELECT s.id AS student_id, s.tenant_id, t.slug AS tenant_slug,
+                t.name AS tenant_name, u.email, u.display_name,
+                s.program_code, s.has_hold
+           FROM students s
+           JOIN users u ON u.id = s.user_id
+           JOIN tenants t ON t.id = s.tenant_id
+          ORDER BY u.display_name`
+      );
+      return r.rows;
+    });
+    res.json({ students });
   } catch (err) {
     console.error('[students] error:', err.message);
     res.status(500).json({ error: 'Database error', detail: err.message });
@@ -153,12 +180,13 @@ app.get('/api/portal/students', async (_req, res) => {
 
 // POST /api/portal/login — real email + password (spec §S8)
 //
-// 1. Look up portal_user by unique email (SECURITY DEFINER — pre-tenant bootstrap)
-// 2. Verify bcrypt password (generic 401 on failure — no user enumeration)
-// 3. Assert record.tenant_id == this portal instance's tenant (403 if wrong portal)
+// 1. Resolve this portal instance's tenant (PORTAL_TENANT slug → id; tenants has no RLS).
+// 2. Look up portal_user by email RLS-scoped to that tenant — so the cross-portal
+//    match (old step 3) is enforced structurally by RLS, not app code (D-R-015).
+// 3. Verify bcrypt password (generic 401 on failure — no user enumeration).
 // 4. No suspend check here — portal login is a SIS surface; students still log in
-//    even when Keel is suspended (spec §S8 + §S11 acceptance criteria)
-// 5. Set signed http-only session cookie {student_id, tenant_id, role}
+//    even when Keel is suspended (spec §S8 + §S11 acceptance criteria).
+// 5. Set signed http-only session cookie {student_id, tenant_id, role}.
 
 app.post('/api/portal/login', async (req, res) => {
   const { email, password } = req.body;
@@ -169,14 +197,27 @@ app.post('/api/portal/login', async (req, res) => {
   let client;
   try {
     client = await pool.connect();
-    // portal_find_by_email is a SECURITY DEFINER function — bypasses RLS for
-    // the pre-session lookup (keel_app is NOBYPASSRLS).
-    const result = await client.query(
-      'SELECT user_id, tenant_id, role, hashed_password, student_id FROM portal_find_by_email($1)',
-      [email]
+
+    // 1. Resolve this portal's tenant FIRST — no SECURITY DEFINER needed.
+    const portalTenantId = await resolvePortalTenantId(client);
+    if (!portalTenantId) {
+      console.error('[login] PORTAL_TENANT not found in DB:', PORTAL_TENANT);
+      return res.status(500).json({ error: 'Portal misconfigured' });
+    }
+
+    // 2. RLS-scoped lookup: returns the row ONLY if the email belongs to THIS
+    // portal's tenant. A cross-portal email returns 0 rows → generic 401 below —
+    // no user enumeration, and the tenant match is structural (no app-side check,
+    // no BYPASSRLS function).
+    const result = await withTenantTx(client, portalTenantId, async (c) =>
+      c.query(
+        'SELECT id AS user_id, tenant_id, role, hashed_password, student_id ' +
+          'FROM portal_user WHERE email = $1 LIMIT 1',
+        [email]
+      )
     );
 
-    // Generic 401 for any auth failure — never leak "email not found"
+    // Generic 401 for any auth failure — never leak "email not found" or "wrong portal"
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -188,24 +229,8 @@ app.post('/api/portal/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Resolve this portal's tenant_id from PORTAL_TENANT slug
-    const tenantRow = await client.query(
-      "SELECT id, slug FROM tenants WHERE slug = $1",
-      [PORTAL_TENANT]
-    );
-    if (tenantRow.rows.length === 0) {
-      console.error('[login] PORTAL_TENANT not found in DB:', PORTAL_TENANT);
-      return res.status(500).json({ error: 'Portal misconfigured' });
-    }
-    const portalTenantId = tenantRow.rows[0].id;
-
-    // Tenant-match: ensure this account belongs to this portal instance (spec §S8 step 3)
-    if (String(user.tenant_id) !== String(portalTenantId)) {
-      console.warn('[login] cross-portal attempt', { email, expected: portalTenantId, got: user.tenant_id });
-      return res.status(403).json({ error: 'This account does not belong to this portal' });
-    }
-
-    // Set session — student_id is from the portal_user's student link (or null for registrar)
+    // user.tenant_id is guaranteed == portalTenantId by the RLS scope above.
+    // Set session — student_id is the portal_user's student link (or user_id for registrar).
     setSessionCookie(res, {
       student_id: user.student_id || user.user_id,  // fallback to user_id for registrar
       tenant_id: user.tenant_id,
@@ -224,6 +249,18 @@ app.post('/api/portal/login', async (req, res) => {
 app.post('/api/portal/logout', (_req, res) => {
   clearSessionCookie(res);
   res.json({ ok: true });
+});
+
+// GET /api/portal/widget-status — is the Keel widget available (tenant not suspended)?
+// Lightweight suspend check that mints NO token, so the portal can grey out the launcher
+// BEFORE the student clicks, instead of showing an error after a failed open (spec §S8).
+app.get('/api/portal/widget-status', requireAuth, async (_req, res) => {
+  try {
+    res.json({ available: await isTenantActive(PORTAL_TENANT) });
+  } catch (err) {
+    console.error('[widget-status] error:', err);
+    res.json({ available: true }); // fail-open — don't block the widget on a check error
+  }
 });
 
 // GET /api/portal/keel-token
@@ -281,8 +318,8 @@ app.get('/api/portal/schedule', requireAuth, async (req, res) => {
   const { student_id, tenant_id } = req.session;
   const client = await pool.connect();
   try {
-    const result = await withTenantTx(client, tenant_id, (c) =>
-      c.query(
+    const { result, profile } = await withTenantTx(client, tenant_id, async (c) => {
+      const result = await c.query(
         `SELECT
            e.id, e.student_id, e.status, e.source,
            s.id AS section_id,
@@ -292,11 +329,19 @@ app.get('/api/portal/schedule', requireAuth, async (req, res) => {
          FROM enrollments e
          JOIN sections s ON e.section_id = s.id
          JOIN courses c ON c.code = s.course_code AND c.tenant_id = s.tenant_id
-         WHERE e.student_id = $1 AND e.tenant_id = $2
+         WHERE e.student_id = $1 AND e.tenant_id = $2 AND e.status = 'enrolled'
          ORDER BY s.term DESC, s.course_code`,
         [student_id, tenant_id]
-      )
-    );
+      );
+      // The student's major of record — reflects an approved major change.
+      const prof = await c.query(
+        `SELECT p.code AS program_code, p.name AS program_name
+         FROM students s LEFT JOIN programs p ON p.id = s.program_id
+         WHERE s.id = $1 AND s.tenant_id = $2`,
+        [student_id, tenant_id]
+      );
+      return { result, profile: prof.rows[0] || null };
+    });
 
     // Transform slots JSONB → human-readable days/start_time/end_time
     const DAY_MAP = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
@@ -325,7 +370,12 @@ app.get('/api/portal/schedule', requireAuth, async (req, res) => {
       };
     });
 
-    res.json({ enrollments });
+    res.json({
+      enrollments,
+      student: profile
+        ? { program_code: profile.program_code, major: profile.program_name }
+        : null,
+    });
   } catch (err) {
     console.error('[schedule] error:', err);
     res.status(500).json({ error: 'Database error fetching schedule' });
@@ -471,8 +521,30 @@ app.post('/api/portal/registrar/requests/:id/decision', requireRegistrar, async 
          WHERE id = $2 AND tenant_id = $3`,
         [newStatus, id, tenant_id]
       );
+
+      // An APPROVED major-change actually changes the student's program of record.
+      // `target` holds the program CODE (e.g. "BSDS"); resolve it to the tenant's
+      // program id and update the student. Runs inside the RLS-scoped tenant tx.
+      if (decision === 'approve' && requestRow.type === 'major_change' && requestRow.target) {
+        const prog = await c.query(
+          'SELECT id FROM programs WHERE code = $1 AND tenant_id = $2',
+          [requestRow.target, tenant_id]
+        );
+        if (prog.rows.length > 0) {
+          await c.query(
+            'UPDATE students SET program_id = $1, program_code = $2 WHERE id = $3 AND tenant_id = $4',
+            [prog.rows[0].id, requestRow.target, requestRow.student_id, tenant_id]
+          );
+        }
+      }
+      // Outbox columns must match Keel's writer (services/actions.outbox_write):
+      //   kind        NOT NULL — channel ('email' | 'notification')
+      //   event_type  canonical event name the publisher routes on
+      //   processed   false until the worker delivers it
+      // Omitting `kind` (NOT NULL, no default) previously rolled back this TX.
       await c.query(
-        `INSERT INTO outbox (tenant_id, event_type, payload, created_at) VALUES ($1, $2, $3, NOW())`,
+        `INSERT INTO outbox (tenant_id, kind, event_type, payload, processed, created_at)
+         VALUES ($1, 'notification', $2, $3, false, NOW())`,
         [
           tenant_id,
           `request.${newStatus}`,
@@ -532,7 +604,7 @@ app.get('/api/portal/registrar/sections', requireRegistrar, async (req, res) => 
       c.query(
         `SELECT s.id, s.course_code, c.name AS course_title,
                 ROW_NUMBER() OVER (PARTITION BY s.course_code ORDER BY s.id) AS section_num,
-                s.term, s.year, s.slots, s.capacity, s.enrolled
+                s.term, s.year, s.slots, s.capacity, s.enrolled, s.instructor
          FROM sections s
          JOIN courses c ON c.code = s.course_code AND c.tenant_id = s.tenant_id
          WHERE s.tenant_id = $1
@@ -562,7 +634,7 @@ app.get('/api/portal/registrar/sections', requireRegistrar, async (req, res) => 
         days: days || null,
         start_time: starts.length ? fmtMin2(Math.min(...starts)) : null,
         end_time: ends.length ? fmtMin2(Math.max(...ends)) : null,
-        instructor: null,
+        instructor: row.instructor ?? null,
         capacity: row.capacity,
         enrolled: row.enrolled,
       };
@@ -571,6 +643,35 @@ app.get('/api/portal/registrar/sections', requireRegistrar, async (req, res) => 
   } catch (err) {
     console.error('[registrar/sections] error:', err);
     res.status(500).json({ error: 'Database error fetching sections' });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /api/portal/registrar/sections/:id/open-seat
+// Demo affordance: free one seat in a section (enrolled -= 1) to simulate a drop. The
+// RQ worker's capacity sync then fills it from the waitlist (auto-enroll or notify),
+// so the waitlist → seat-open → email/enroll flow can be demonstrated on demand.
+app.post('/api/portal/registrar/sections/:id/open-seat', requireRegistrar, async (req, res) => {
+  const { tenant_id } = req.session;
+  const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    const r = await withTenantTx(client, tenant_id, (c) =>
+      c.query(
+        `UPDATE sections SET enrolled = GREATEST(enrolled - 1, 0)
+         WHERE id = $1 AND tenant_id = $2 AND enrolled > 0
+         RETURNING course_code, enrolled, capacity`,
+        [id, tenant_id]
+      )
+    );
+    if (r.rows.length === 0) {
+      return res.status(409).json({ error: 'Section has no enrolled seat to free.' });
+    }
+    res.json({ id, ...r.rows[0] });
+  } catch (err) {
+    console.error('[open-seat] error:', err);
+    res.status(500).json({ error: 'Database error opening a seat' });
   } finally {
     client.release();
   }

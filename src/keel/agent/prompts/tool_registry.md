@@ -38,7 +38,7 @@
 
 ---
 
-## planning tools (read-only writes to plans table, no approval gate)
+## planning tools (read-only or student-owned plan metadata; no approval gate)
 
 ### propose_plan
 - **When to call**: Student asks to plan courses for a term.
@@ -51,22 +51,17 @@
 - **What it returns**: A read-only explanation of what the degree audit would look like with those courses completed.
 - **What it does NOT do**: Does not change the transcript. Not a real plan.
 
-### save_plan
-- **When to call**: Student wants to save a course list as a plan.
-- **What it returns**: plan_id of the saved, engine-verified plan.
-- **What it does NOT do**: Does not enroll. Does not activate the plan.
+### load_grad_plan
+- **When to call**: Student asks for their saved graduation plan and does not provide a plan ID.
+- **What it returns**: The active saved graduation plan, re-verified and rendered as a card.
 
-### load_plan
-- **When to call**: Student asks to view a previously saved plan.
-- **What it returns**: Plan terms + courses. Re-validates if catalog changed.
+### swap_grad_plan_course
+- **When to call**: Student wants to swap one course in their saved graduation plan.
+- **What it returns**: Updated saved graduation plan card if the full plan re-verifies; otherwise a validation error.
 
-### activate_plan
-- **When to call**: Student wants to mark a plan as their active plan.
-- **What it returns**: Confirmation. Only one active plan per student (partial unique index).
-
-### swap_course
-- **When to call**: Student wants to replace one course in a saved plan with another.
-- **What it returns**: Confirmation + re-verification result. Idempotent.
+### delete_grad_plan
+- **When to call**: Student explicitly asks to delete, clear, or forget their saved graduation plan.
+- **What it returns**: Confirmation. This archives the plan record for audit history; it is no longer active.
 
 ---
 

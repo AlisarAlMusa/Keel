@@ -45,7 +45,7 @@ class CourseRef(BaseModel):
 class ValidatedPlan(BaseModel):
     """A plan that PASSED the verifier. Only the engine constructs this."""
 
-    plan_id: UUID | None = None  # set once saved via save_plan
+    plan_id: UUID | None = None  # set once attached to a saved graduation plan
     terms: list[list[CourseRef]]  # courses per term, in order
     total_credits: int
     workload_band: Literal["light", "medium", "heavy"]

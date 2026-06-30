@@ -77,3 +77,4 @@ class ContextEnvelope(BaseModel):
     message: str
     preferences: StudentPreference = StudentPreference()
     persona_prompt: str = "You are Keel, a helpful AI academic advisor."
+    persona_name: str = "Keel"  # the configured advisor name — drives the agent's identity

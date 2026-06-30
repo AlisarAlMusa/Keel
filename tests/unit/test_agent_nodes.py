@@ -162,7 +162,7 @@ async def test_run_agent_redacts_output() -> None:
         session_ttl=1800,
     )
 
-    # Email and API key must not appear in output
-    assert "alice@secret.com" not in result
-    assert "sk-abc123def456ghi789jkl012mno345" not in result
-    assert "[EMAIL]" in result or "[REDACTED_KEY]" in result
+    # run_agent now returns an AgentResult; the text is the redacted response.
+    assert "alice@secret.com" not in result.text
+    assert "sk-abc123def456ghi789jkl012mno345" not in result.text
+    assert "[EMAIL]" in result.text or "[REDACTED_KEY]" in result.text

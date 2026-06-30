@@ -180,6 +180,7 @@ class Section(Base):
     )
     capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     enrolled: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    instructor: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = _created_at()
 
 

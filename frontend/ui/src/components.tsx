@@ -398,9 +398,10 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   onClose: () => void;
+  width?: number | string;
 }
 
-export function Modal({ open, title, children, onClose }: ModalProps) {
+export function Modal({ open, title, children, onClose, width = '440px' }: ModalProps) {
   if (!open) return null;
   return (
     <div
@@ -420,8 +421,11 @@ export function Modal({ open, title, children, onClose }: ModalProps) {
           background: 'var(--surface)',
           borderRadius: 'var(--radius-lg)',
           padding: 'var(--sp-6)',
-          width: '440px',
+          width,
           maxWidth: '90vw',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+          boxSizing: 'border-box',
           boxShadow: '0 16px 48px rgba(2,18,47,0.45)',
         }}
         onClick={(e) => e.stopPropagation()}
@@ -442,6 +446,151 @@ export function Modal({ open, title, children, onClose }: ModalProps) {
   );
 }
 
+// ── Markdown rendering (lightweight, safe — no dangerouslySetInnerHTML) ─────────
+//
+// The agent replies in Markdown (## headings, **bold**, bullet/numbered lists,
+// `inline code`). We render a deliberately small subset to React nodes so the
+// chat bubble shows formatted text instead of literal `##`/`**`. No HTML is
+// injected — every node is a real React element, so this is XSS-safe by default.
+
+// Inline pass: **bold**, *italic* / _italic_, `code`. Returns React nodes.
+function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  // Split on bold / italic / inline-code while keeping the delimiters.
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*|_[^_]+_)/g;
+  const parts = text.split(pattern);
+  parts.forEach((part, i) => {
+    if (!part) return;
+    const key = `${keyPrefix}-i${i}`;
+    if (part.startsWith('**') && part.endsWith('**')) {
+      nodes.push(<strong key={key}>{part.slice(2, -2)}</strong>);
+    } else if (part.startsWith('`') && part.endsWith('`')) {
+      nodes.push(
+        <code
+          key={key}
+          style={{
+            fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+            fontSize: '0.92em',
+            background: 'rgba(0,4,53,0.08)',
+            padding: '1px 4px',
+            borderRadius: '4px',
+          }}
+        >
+          {part.slice(1, -1)}
+        </code>,
+      );
+    } else if (
+      (part.startsWith('*') && part.endsWith('*')) ||
+      (part.startsWith('_') && part.endsWith('_'))
+    ) {
+      nodes.push(<em key={key}>{part.slice(1, -1)}</em>);
+    } else {
+      nodes.push(part);
+    }
+  });
+  return nodes;
+}
+
+// Block pass: headings, ordered/unordered lists, paragraphs. Lines within a
+// paragraph keep their soft breaks.
+function renderMarkdown(src: string): React.ReactNode[] {
+  const lines = src.replace(/\r\n/g, '\n').split('\n');
+  const blocks: React.ReactNode[] = [];
+  let para: string[] = [];
+  let list: { ordered: boolean; items: string[] } | null = null;
+  let key = 0;
+
+  const flushPara = () => {
+    if (para.length === 0) return;
+    blocks.push(
+      <p key={`p${key++}`} style={{ margin: '0 0 8px' }}>
+        {para.map((ln, i) => (
+          <React.Fragment key={i}>
+            {i > 0 && <br />}
+            {renderInline(ln, `p${key}-${i}`)}
+          </React.Fragment>
+        ))}
+      </p>,
+    );
+    para = [];
+  };
+
+  const flushList = () => {
+    const current = list;
+    if (!current) return;
+    const style: React.CSSProperties = { margin: '0 0 8px', paddingLeft: '20px' };
+    blocks.push(
+      current.ordered ? (
+        <ol key={`l${key++}`} style={style}>
+          {current.items.map((it, i) => (
+            <li key={i} style={{ marginBottom: '2px' }}>
+              {renderInline(it, `l${key}-${i}`)}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <ul key={`l${key++}`} style={style}>
+          {current.items.map((it, i) => (
+            <li key={i} style={{ marginBottom: '2px' }}>
+              {renderInline(it, `l${key}-${i}`)}
+            </li>
+          ))}
+        </ul>
+      ),
+    );
+    list = null;
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+
+    if (heading) {
+      flushPara();
+      flushList();
+      const level = heading[1].length;
+      blocks.push(
+        <div
+          key={`h${key++}`}
+          style={{
+            fontFamily: 'Fraunces, "Source Serif 4", Georgia, serif',
+            fontWeight: 700,
+            fontSize: level <= 1 ? '1.15em' : level === 2 ? '1.07em' : '1em',
+            margin: '4px 0 6px',
+          }}
+        >
+          {renderInline(heading[2], `h${key}`)}
+        </div>,
+      );
+    } else if (bullet) {
+      flushPara();
+      if (!list || list.ordered) {
+        flushList();
+        list = { ordered: false, items: [] };
+      }
+      list.items.push(bullet[1]);
+    } else if (numbered) {
+      flushPara();
+      if (!list || !list.ordered) {
+        flushList();
+        list = { ordered: true, items: [] };
+      }
+      list.items.push(numbered[1]);
+    } else if (line.trim() === '') {
+      flushPara();
+      flushList();
+    } else {
+      flushList();
+      para.push(line);
+    }
+  }
+  flushPara();
+  flushList();
+  return blocks;
+}
+
 // ── StreamingText ─────────────────────────────────────────────────────────────
 
 interface StreamingTextProps {
@@ -451,8 +600,8 @@ interface StreamingTextProps {
 
 export function StreamingText({ text, isStreaming }: StreamingTextProps) {
   return (
-    <div style={{ position: 'relative' }}>
-      <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</span>
+    <div className="keel-md" style={{ position: 'relative', wordBreak: 'break-word' }}>
+      {renderMarkdown(text)}
       {isStreaming && (
         <span
           style={{
@@ -467,7 +616,8 @@ export function StreamingText({ text, isStreaming }: StreamingTextProps) {
           }}
         />
       )}
-      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
+      <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+        .keel-md > :last-child { margin-bottom: 0 !important; }`}</style>
     </div>
   );
 }

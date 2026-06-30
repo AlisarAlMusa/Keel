@@ -181,9 +181,79 @@ function LoginScreen({ onLogin }: { onLogin: (role: string, tenantId: string | n
   );
 }
 
+// ── Premium line icons (stroke-based, inherit currentColor) ───────────────────
+
+function Icon({ name, size = 20 }: { name: string; size?: number }) {
+  const p = {
+    width: size,
+    height: size,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.7,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+  };
+  switch (name) {
+    case 'knowledge': // open book
+      return (<svg {...p}><path d="M12 7v14" /><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" /></svg>);
+    case 'widget': // sliders
+      return (<svg {...p}><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></svg>);
+    case 'snippet': // code
+      return (<svg {...p}><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></svg>);
+    case 'cost': // dollar
+      return (<svg {...p}><line x1="12" y1="2" x2="12" y2="22" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>);
+    case 'audit': // clipboard list
+      return (<svg {...p}><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" /><rect x="9" y="3" width="6" height="4" rx="1" /><line x1="8.5" y1="12" x2="15.5" y2="12" /><line x1="8.5" y1="16" x2="13" y2="16" /></svg>);
+    case 'tenants': // buildings
+      return (<svg {...p}><path d="M3 21h18" /><path d="M9 21V8l-5 3v10" /><path d="M9 21V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v17" /><line x1="13" y1="7" x2="15" y2="7" /><line x1="13" y1="11" x2="15" y2="11" /><line x1="13" y1="15" x2="15" y2="15" /></svg>);
+    default:
+      return (<svg {...p}><circle cx="12" cy="12" r="9" /></svg>);
+  }
+}
+
 // ── Shared sidebar shell ──────────────────────────────────────────────────────
 
 interface NavItem { label: string; icon: string; }
+
+// One nav row — a creamy box that turns brown on hover/active (brand colours).
+function NavButton({ item, isActive, onClick }: { item: NavItem; isActive: boolean; onClick: () => void }) {
+  const [hover, setHover] = useState(false);
+  const brown = hover || isActive;
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 13,
+        width: '100%',
+        padding: '13px 15px',
+        marginBottom: 9,
+        borderRadius: 12,
+        background: brown ? '#4B2E0A' : '#F0ECDD',
+        color: brown ? '#F0ECDD' : '#1A1206',
+        border: 'none',
+        cursor: 'pointer',
+        fontFamily: "'Inter', system-ui, sans-serif",
+        fontSize: '0.96rem',
+        fontWeight: isActive ? 700 : 500,
+        letterSpacing: '0.01em',
+        textAlign: 'left',
+        boxShadow: brown
+          ? '0 6px 18px rgba(75,46,10,0.40)'
+          : '0 1px 3px rgba(0,4,53,0.10)',
+        transform: brown ? 'translateX(3px)' : 'none',
+        transition: 'background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, transform 0.12s ease',
+      }}
+    >
+      <Icon name={item.icon} size={21} />
+      {item.label}
+    </button>
+  );
+}
 
 function AppShell({
   nav,
@@ -207,41 +277,31 @@ function AppShell({
   return (
     <div className="keel-light" style={{ display: 'flex', minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
       {/* Sidebar */}
-      <nav style={{ width: 220, flexShrink: 0, background: '#010619', display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0 }}>
-        {/* Logo banner — transparent: sidebar is now #000719, matching the logo PNG background */}
-        <div style={{ padding: '12px 16px 8px', borderBottom: '1px solid rgba(240,236,221,0.08)' }}>
+      <nav style={{ width: 272, flexShrink: 0, background: '#010619', display: 'flex', flexDirection: 'column', height: '100vh', position: 'sticky', top: 0 }}>
+        {/* Logo banner — larger, more breathing room */}
+        <div style={{ padding: '22px 22px 16px', borderBottom: '1px solid rgba(240,236,221,0.08)' }}>
           <img
             src="/static/final-keel-logo.jpeg"
             alt="Keel"
-            style={{ width: '100%', maxWidth: 210, objectFit: 'contain', display: 'block', margin: '0 auto' }}
+            style={{ width: '100%', maxWidth: 248, objectFit: 'contain', display: 'block', margin: '0 auto' }}
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
           />
-          <div style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: '0.6rem', color: '#4B2E0A', marginTop: '4px', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 600, textAlign: 'center' }}>
+          <div style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: '0.66rem', color: '#A9805A', marginTop: '8px', letterSpacing: '0.18em', textTransform: 'uppercase', fontWeight: 600, textAlign: 'center' }}>
             {role === 'platform_operator' ? 'Platform Console' : 'Admin Console'}
           </div>
         </div>
 
-        <div style={{ flex: 1, paddingTop: 'var(--sp-3)' }}>
-          {nav.map((item, i) => {
-            const isActive = i === active;
-            return (
-              <button
-                key={item.label}
-                onClick={() => onChange(i)}
-                style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', width: '100%', padding: 'var(--sp-3) var(--sp-4)', background: isActive ? 'rgba(75,46,10,0.12)' : 'transparent', border: 'none', borderLeft: isActive ? '3px solid #4B2E0A' : '3px solid transparent', color: isActive ? 'var(--moonlight)' : 'var(--frost)', cursor: 'pointer', fontFamily: "'Inter', system-ui, sans-serif", fontSize: 'var(--text-sm)', fontWeight: isActive ? 600 : 400, textAlign: 'left' }}
-              >
-                <span style={{ width: 18, textAlign: 'center', fontSize: 'var(--text-sm)', flexShrink: 0 }}>{item.icon}</span>
-                {item.label}
-              </button>
-            );
-          })}
+        <div style={{ flex: 1, padding: '20px 16px', overflowY: 'auto' }}>
+          {nav.map((item, i) => (
+            <NavButton key={item.label} item={item} isActive={i === active} onClick={() => onChange(i)} />
+          ))}
         </div>
 
-        <div style={{ padding: 'var(--sp-4)', borderTop: '1px solid rgba(240,236,221,0.1)' }}>
-          <div style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 'var(--text-xs)', color: 'var(--frost)', marginBottom: 'var(--sp-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={tenantName ?? identity}>
+        <div style={{ padding: '18px 20px', borderTop: '1px solid rgba(240,236,221,0.1)' }}>
+          <div style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: '0.78rem', color: '#E7DFC9', fontWeight: 600, marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={tenantName ?? identity}>
             {role === 'platform_operator' ? 'Platform Operator' : (tenantName ?? `Tenant: ${identity.slice(0, 8)}…`)}
           </div>
-          <button onClick={onSignOut} style={{ background: 'transparent', border: 'none', color: 'var(--frost)', fontFamily: "'Inter', system-ui, sans-serif", fontSize: 'var(--text-xs)', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+          <button onClick={onSignOut} style={{ background: 'transparent', border: 'none', color: '#9FB3CE', fontFamily: "'Inter', system-ui, sans-serif", fontSize: '0.74rem', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
             Sign out
           </button>
         </div>
@@ -275,11 +335,11 @@ function AppShell({
 // ── Tenant-admin shell ────────────────────────────────────────────────────────
 
 const ADMIN_NAV: NavItem[] = [
-  { label: 'Knowledge Base', icon: '⬆' },
-  { label: 'Widget Config',  icon: '⚙' },
-  { label: 'Embed Snippet',  icon: '</>' },
-  { label: 'Usage & Cost',   icon: '$' },
-  { label: 'Audit Log',      icon: '≡' },
+  { label: 'Knowledge Base', icon: 'knowledge' },
+  { label: 'Widget Config',  icon: 'widget' },
+  { label: 'Embed Snippet',  icon: 'snippet' },
+  { label: 'Usage & Cost',   icon: 'cost' },
+  { label: 'Audit Log',      icon: 'audit' },
 ];
 
 function AdminApp({ tenantId, tenantName, onSignOut }: { tenantId: string; tenantName: string | null; onSignOut: () => void }) {
@@ -301,9 +361,9 @@ function AdminApp({ tenantId, tenantName, onSignOut }: { tenantId: string; tenan
 // ── Platform-operator shell ───────────────────────────────────────────────────
 
 const PLATFORM_NAV: NavItem[] = [
-  { label: 'Tenants',     icon: '🏫' },
-  { label: 'Usage Cost',  icon: '$' },
-  { label: 'Audit Log',   icon: '≡' },
+  { label: 'Tenants',     icon: 'tenants' },
+  { label: 'Usage Cost',  icon: 'cost' },
+  { label: 'Audit Log',   icon: 'audit' },
 ];
 
 function PlatformApp({ onSignOut }: { onSignOut: () => void }) {

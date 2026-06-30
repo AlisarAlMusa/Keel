@@ -53,6 +53,14 @@ async def _scoped_session(
     return session
 
 
+def _require_tenant(ctx: AdminContext) -> str:
+    if not ctx.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="tenant_id missing from token"
+        )
+    return ctx.tenant_id
+
+
 # ---------------------------------------------------------------------------
 # RAG upload
 # ---------------------------------------------------------------------------
@@ -131,6 +139,229 @@ async def upload_document_legacy(
     ctx: AdminContext = _require_admin,
 ) -> DocumentUploadResponse:
     return await upload_rag_document(file=file, request=request, ctx=ctx)
+
+
+# ---------------------------------------------------------------------------
+# RAG document management (list / view / delete / edit)
+#
+# The advising corpus can contain contradictory prose if a newer file is uploaded
+# alongside an older one on the same topic. These endpoints let the registrar SEE
+# what's indexed, read a file, replace its content, or delete it — keeping MinIO
+# (source of truth blob) and pgvector (rag_chunks) in sync.
+# ---------------------------------------------------------------------------
+
+
+class RagDocumentRow(BaseModel):
+    filename: str
+    chunks: int
+    updated_at: str | None
+
+
+class RagDocumentList(BaseModel):
+    documents: list[RagDocumentRow]
+
+
+class RagDocumentContent(BaseModel):
+    filename: str
+    content: str
+
+
+class RagDocumentUpdate(BaseModel):
+    content: str
+
+
+def _safe_filename(name: str) -> str:
+    """Reject path traversal — a document name must be a bare filename."""
+    if not name or "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename")
+    return name
+
+
+async def _resolve_source(session: AsyncSession, tenant_id: str, filename: str) -> str | None:
+    """Find the actual stored `source` for a filename in this tenant.
+
+    Sources are prefixed differently by origin (seed uses the slug, admin upload uses
+    the tenant UUID), so match on the trailing `/<filename>` rather than assuming a
+    prefix. Returns the full source (which is also the MinIO key) or None.
+    """
+    row = await session.execute(
+        text(
+            "SELECT source FROM rag_chunks WHERE tenant_id = :tid "
+            "AND source LIKE :pat ORDER BY source LIMIT 1"
+        ),
+        {"tid": tenant_id, "pat": f"%/{filename}"},
+    )
+    return row.scalar_one_or_none()
+
+
+@router.get("/rag/documents", response_model=RagDocumentList)
+async def list_rag_documents(
+    request: Request,
+    ctx: AdminContext = _require_admin,
+) -> RagDocumentList:
+    """List the tenant's indexed advising documents (one row per source file)."""
+    tenant_id = _require_tenant(ctx)
+    sf = _get_session_factory(request)
+    async with sf() as session:
+        await session.execute(
+            text("SELECT set_config('app.tenant_id', :tid, true)"), {"tid": tenant_id}
+        )
+        rows = await session.execute(
+            text(
+                "SELECT source, count(*) AS chunks, max(updated_at) AS updated_at "
+                "FROM rag_chunks WHERE tenant_id = :tid GROUP BY source ORDER BY source"
+            ),
+            {"tid": tenant_id},
+        )
+        docs = [
+            RagDocumentRow(
+                # stored source is "<tenant_id>/<filename>" — show just the filename
+                filename=str(r["source"]).split("/", 1)[-1],
+                chunks=int(r["chunks"]),
+                updated_at=r["updated_at"].isoformat() if r["updated_at"] else None,
+            )
+            for r in rows.mappings()
+        ]
+    return RagDocumentList(documents=docs)
+
+
+@router.get("/rag/documents/{filename}", response_model=RagDocumentContent)
+async def get_rag_document(
+    filename: str,
+    request: Request,
+    ctx: AdminContext = _require_admin,
+) -> RagDocumentContent:
+    """Return the raw text of one indexed document (read from MinIO)."""
+    tenant_id = _require_tenant(ctx)
+    filename = _safe_filename(filename)
+    sf = _get_session_factory(request)
+    async with sf() as session:
+        await session.execute(
+            text("SELECT set_config('app.tenant_id', :tid, true)"), {"tid": tenant_id}
+        )
+        source = await _resolve_source(session, tenant_id, filename)
+    if not source:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    from keel.config import get_settings
+
+    settings = get_settings()
+    s3_client = request.app.state.storage
+    try:
+        content = storage_infra.get_text(s3_client, settings.minio_bucket, source)
+    except Exception as exc:
+        _log.warning("admin.rag_get_failed", tenant_id=tenant_id, source=source, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Document not found in storage"
+        ) from exc
+    return RagDocumentContent(filename=filename, content=content)
+
+
+@router.delete("/rag/documents/{filename}", status_code=status.HTTP_200_OK)
+async def delete_rag_document(
+    filename: str,
+    request: Request,
+    ctx: AdminContext = _require_admin,
+) -> dict[str, Any]:
+    """Delete a document from BOTH pgvector and MinIO.
+
+    Chunks are deleted FIRST (under tenant RLS) so retrieval can never return the
+    removed content even if the blob delete lags; the MinIO object is removed second.
+    """
+    tenant_id = _require_tenant(ctx)
+    filename = _safe_filename(filename)
+
+    sf = _get_session_factory(request)
+    async with sf() as session:
+        async with session.begin():
+            await session.execute(
+                text("SELECT set_config('app.tenant_id', :tid, true)"), {"tid": tenant_id}
+            )
+            source = await _resolve_source(session, tenant_id, filename)
+            res = await session.execute(
+                text("DELETE FROM rag_chunks WHERE tenant_id = :tid AND source LIKE :pat"),
+                {"tid": tenant_id, "pat": f"%/{filename}"},
+            )
+    deleted_chunks = int(getattr(res, "rowcount", 0) or 0)
+    source = source or f"{tenant_id}/{filename}"
+
+    from keel.config import get_settings
+
+    settings = get_settings()
+    s3_client = request.app.state.storage
+    blob_deleted = True
+    try:
+        storage_infra.delete_object(s3_client, settings.minio_bucket, source)
+    except Exception as exc:  # noqa: BLE001 — chunks already gone → retrieval is safe
+        blob_deleted = False
+        _log.warning(
+            "admin.rag_blob_delete_failed", tenant_id=tenant_id, source=source, error=str(exc)
+        )
+
+    _log.info(
+        "admin.rag_deleted",
+        tenant_id=tenant_id,
+        source=source,
+        chunks=deleted_chunks,
+        blob_deleted=blob_deleted,
+    )
+    return {"filename": filename, "deleted_chunks": deleted_chunks, "blob_deleted": blob_deleted}
+
+
+@router.put(
+    "/rag/documents/{filename}",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def update_rag_document(
+    filename: str,
+    body: RagDocumentUpdate,
+    request: Request,
+    ctx: AdminContext = _require_admin,
+) -> DocumentUploadResponse:
+    """Replace a document's content and re-index it.
+
+    Writes the new text to MinIO, then re-ingests: ingest_file upserts changed chunks
+    and deletes orphaned ones for this source, so the index exactly matches the new
+    content (no stale vectors).
+    """
+    tenant_id = _require_tenant(ctx)
+    filename = _safe_filename(filename)
+    if not body.content.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty content")
+
+    sf = _get_session_factory(request)
+    async with sf() as session:
+        await session.execute(
+            text("SELECT set_config('app.tenant_id', :tid, true)"), {"tid": tenant_id}
+        )
+        source = await _resolve_source(session, tenant_id, filename)
+    # Write back to the existing source key (preserving its prefix); new files get the
+    # tenant-UUID prefix.
+    source = source or f"{tenant_id}/{filename}"
+
+    from keel.config import get_settings
+
+    settings = get_settings()
+    s3_client = request.app.state.storage
+    try:
+        storage_infra.put_text(s3_client, settings.minio_bucket, source, body.content)
+    except Exception as exc:
+        _log.error("admin.rag_update_failed", tenant_id=tenant_id, source=source, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"MinIO write failed: {type(exc).__name__}",
+        ) from exc
+
+    redis_conn = Redis.from_url(settings.redis_url)
+    q = Queue(_RQ_QUEUE, connection=redis_conn)
+    job = q.enqueue(
+        run_ingest_source,
+        kwargs={"tenant_id_str": tenant_id, "source": source, "chunk_type": "policy"},
+    )
+    chunks_est = max(1, len(body.content.encode()) // 400)
+    _log.info("admin.rag_updated", tenant_id=tenant_id, source=source, job_id=job.id)
+    return DocumentUploadResponse(source=source, job_id=job.id, chunks_estimated=chunks_est)
 
 
 # ---------------------------------------------------------------------------
@@ -238,17 +469,34 @@ async def put_widget_config(
                 if body.enabled_tools is not None:
                     cfg.enabled_tools = body.enabled_tools
 
-    if not hasattr(request.app.state, "widget_origins_map"):
-        request.app.state.widget_origins_map = {}
-    request.app.state.widget_origins_map[tenant_id] = list(body.allowed_origins or [])
+            # Capture effective values INSIDE the transaction. After commit the cfg
+            # instance is expired (expire_on_commit), so reading cfg.* afterwards
+            # would emit SQL on a closed session and raise DetachedInstanceError.
+            effective_persona = cfg.persona
+            effective_persona_name = cfg.persona_name
+            effective_origins = list(cfg.allowed_origins)
+            effective_tools = list(cfg.enabled_tools)
+
+    # Refresh the in-memory caches the LIVE agent reads on every chat turn so a
+    # persona/origin change takes effect immediately — not only after a restart.
+    # chat.py reads widget_persona_prompt_map → ContextEnvelope.persona_prompt →
+    # graph._system_prompt. Without this refresh the agent keeps the persona that
+    # was loaded at startup, which looks like the persona is "hardcoded".
+    state = request.app.state
+    for attr in ("widget_origins_map", "widget_persona_map", "widget_persona_prompt_map"):
+        if not hasattr(state, attr):
+            setattr(state, attr, {})
+    state.widget_origins_map[tenant_id] = effective_origins
+    state.widget_persona_map[tenant_id] = effective_persona_name or "Keel"
+    state.widget_persona_prompt_map[tenant_id] = effective_persona
 
     _log.info("admin.widget_config_updated", tenant_id=tenant_id)
     return WidgetConfigResponse(
         tenant_id=tenant_id,
-        persona=body.persona or cfg.persona,
-        persona_name=body.persona_name or cfg.persona_name,
-        allowed_origins=body.allowed_origins or list(cfg.allowed_origins),
-        enabled_tools=body.enabled_tools or list(cfg.enabled_tools),
+        persona=effective_persona,
+        persona_name=effective_persona_name,
+        allowed_origins=effective_origins,
+        enabled_tools=effective_tools,
     )
 
 

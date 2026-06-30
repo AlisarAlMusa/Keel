@@ -325,6 +325,11 @@ propose_plan(PlanRequest) -> ProposedPlans          # generate→validate→repa
 simulate_whatif(WhatIfRequest) -> WhatIfResult       # re-audit vs target program; graduation date + credits/term
 predict_risk(plan_id) -> GradRiskResponse + mitigation_text
 search_sections(course_codes, term, prefs) -> list[SectionPlan]
+# As-built: realised as `propose_sections(course_codes, term, year, excluded_days,
+# min_start_hour)` — a READ tool that lists the OPEN sections per course (day/time,
+# instructor, seats) and which meet the prefs; the agent reasons over them and passes the
+# same prefs to stage_enrollment, where the engine picks matching open, conflict-free
+# sections. See DECISIONS D-P6-003 and specs/008…/registration-section-flow.md.
 rag_search(query) -> Answer(text, sources)
 save_plan(plan_id|draft) -> Plan                      # Plan-entity write, NOT a registration write
 swap_course(plan_id, drop_code, add_code) -> Plan|list[Violation]
@@ -358,6 +363,17 @@ class ProposedPlans(BaseModel):
 ---
 
 ## 8. The action pattern (`services/actions/`) — every write
+
+> **As-built note (see DESIGN.md §4, DECISIONS D-R-001/003).** The implementation
+> realizes "approval" as a persisted state machine on the `actions` table + a
+> LangGraph resume, rather than a separate `ApprovalToken` object: a write tool
+> *stages* a `pending` action (frozen payload + runtime `thread_id`); the student
+> approves via `POST /actions/{id}/approve` authenticated by the **verified widget
+> JWT**; `execute_node` runs only on the approved resume and the `approved→executed`
+> transition is single-use. The safety property below ("nothing reaches the write
+> without explicit, verified approval") holds identically. The `ApprovalToken` shape
+> in this section is the contract intent; the state-machine form is the equivalent
+> realization.
 
 ```python
 class ActionType(StrEnum):

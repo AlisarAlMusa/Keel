@@ -25,12 +25,14 @@ from typing import Any, cast
 from uuid import UUID
 
 import redis.asyncio as aioredis
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.types import interrupt
+from redis.exceptions import RedisError
 
+from keel.agent.result import AgentResult
 from keel.agent.state import AgentState
 from keel.agent.tools import AgentDeps, make_tools
 from keel.domain.schemas import ContextEnvelope
@@ -60,8 +62,19 @@ _SNAPSHOT_KEY_PREFIX = "snapshot"
 _SNAPSHOT_TTL = 300  # 5 min; invalidation hooks land in Phase 3
 _SESSION_N = 10  # last N messages from Redis session history
 
-# Action types that trigger the stage → interrupt → execute pattern.
-_STAGE_TOOL_NAMES = {"stage_enrollment", "stage_waitlist_join", "stage_waitlist_leave"}
+# Tools that trigger the stage → interrupt → execute pattern (every write goes
+# through here so it is gated by explicit student approval). Institutional F1–F4
+# are included so a petition/graduation/major-change/escalation is filed only
+# after approval — never directly by the agent.
+_STAGE_TOOL_NAMES = {
+    "stage_enrollment",
+    "stage_waitlist_join",
+    "stage_waitlist_leave",
+    "apply_graduation",
+    "request_major_change",
+    "submit_petition",
+    "escalate",
+}
 
 
 def _extract_text(content: Any) -> str:
@@ -74,6 +87,37 @@ def _extract_text(content: Any) -> str:
         ]
         return "\n".join(p for p in parts if p)
     return str(content) if content else ""
+
+
+def _after_stage(state: AgentState) -> str:
+    """Decide where to go after a stage_* tool ran (conditional edge).
+
+    A stage tool has two outcomes:
+      • It staged a pending action — its ToolMessage carries an ``action_id`` →
+        route to ``interrupt`` and pause for explicit human approval (unchanged
+        happy path; the approval gate is untouched).
+      • It returned a ``ToolError`` (no ``action_id`` — e.g. no open section for a
+        course) → route back to ``llm`` so the model can read the error and reply
+        conversationally (offer the waitlist or an alternative term, per the
+        system prompt rules).
+
+    Previously the edge ``stage → interrupt`` was unconditional, so a failed stage
+    left the graph suspended at ``interrupt`` with no action: the error never
+    reached the LLM or the student, and the response came back empty / looped.
+    """
+    messages = state.get("messages", [])
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            # Reached the tool-call message; we've seen all of this batch's results.
+            break
+        if isinstance(msg, ToolMessage) and isinstance(msg.content, str):
+            try:
+                data = json.loads(msg.content)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(data, dict) and data.get("action_id"):
+                return "interrupt"
+    return "llm"
 
 
 def _session_key(tenant_id: str, session_id: str) -> str:
@@ -90,10 +134,12 @@ def _system_prompt(context: ContextEnvelope, snapshot: dict[str, Any] | None) ->
         snap_text = "\n\nStudent snapshot (engine-computed, authoritative):\n" + json.dumps(
             snapshot, indent=2
         )
+    persona_name = getattr(context, "persona_name", None) or "Keel"
     base = _SYSTEM_PROMPT_TEMPLATE.format(
         student_id=context.student_id,
         tenant_id=context.tenant_id,
         snapshot=snap_text,
+        persona_name=persona_name,
     )
     # Prepend the tenant-configured persona instruction (from widget_config.persona).
     # This overrides the generic opening so each institution can brand the advisor.
@@ -113,7 +159,7 @@ async def _load_session_history(
         raw = await redis.get(key)
         if raw:
             return cast(list[dict[str, Any]], json.loads(raw))[-_SESSION_N * 2 :]
-    except Exception as exc:
+    except (RedisError, ValueError, TypeError) as exc:
         _log.warning("agent.session_load_failed", error=str(exc))
     return []
 
@@ -128,7 +174,7 @@ async def _save_session_history(
     key = _session_key(tenant_id, session_id)
     try:
         await redis.set(key, json.dumps(messages), ex=ttl)
-    except Exception as exc:
+    except (RedisError, ValueError, TypeError) as exc:
         _log.warning("agent.session_save_failed", error=str(exc))
 
 
@@ -142,7 +188,7 @@ async def _load_snapshot(
         raw = await redis.get(key)
         if raw:
             return json.loads(raw)  # type: ignore[no-any-return]
-    except Exception as exc:
+    except (RedisError, ValueError, TypeError) as exc:
         _log.warning("agent.snapshot_load_failed", error=str(exc))
     return None
 
@@ -156,8 +202,62 @@ async def _save_snapshot(
     key = _snapshot_key(tenant_id, student_id)
     try:
         await redis.set(key, json.dumps(snapshot), ex=_SNAPSHOT_TTL)
-    except Exception as exc:
+    except (RedisError, ValueError, TypeError) as exc:
         _log.warning("agent.snapshot_save_failed", error=str(exc))
+
+
+async def _pending_seat_alerts(deps: AgentDeps, tenant_id: str, student_id: str) -> str:
+    """Context block for sections where the student was notified a seat opened.
+
+    Seat-open alerts are delivered OUT OF BAND (email + in-app bell) — they never enter the
+    chat history, so without this the agent can't resolve "yes, enroll me for it". We surface
+    each waitlist row that was notified, still has an open seat, and the student isn't already
+    enrolled in — with its section_id — so the agent can enroll on a plain "yes".
+    """
+    import sqlalchemy as sa
+
+    from keel.infra.database.session import tenant_session as _ts
+    from keel.services.actions import fmt_slots
+
+    try:
+        async with _ts(deps.session_factory, UUID(tenant_id)) as session:
+            rows = await session.execute(
+                sa.text(
+                    "SELECT s.id, s.course_code, s.instructor, s.slots, s.term, s.year, "
+                    "c.name AS course_name "
+                    "FROM waitlist w JOIN sections s ON s.id = w.section_id "
+                    "LEFT JOIN courses c ON c.tenant_id = s.tenant_id AND c.code = s.course_code "
+                    "WHERE w.tenant_id = :tid AND w.student_id = :sid "
+                    "AND w.status = 'waiting' AND w.notified_at IS NOT NULL "
+                    "AND s.enrolled < s.capacity "
+                    "AND NOT EXISTS (SELECT 1 FROM enrollments e "
+                    "  WHERE e.tenant_id = s.tenant_id AND e.student_id = :sid "
+                    "  AND e.section_id = s.id AND e.status = 'enrolled')"
+                ),
+                {"tid": tenant_id, "sid": student_id},
+            )
+            recs = rows.mappings().all()
+    except Exception as exc:  # noqa: BLE001 — never break the turn on this best-effort lookup
+        _log.warning("agent.seat_alerts_failed", error=str(exc))
+        return ""
+
+    if not recs:
+        return ""
+    lines = []
+    for r in recs:
+        cname = f" ({r['course_name']})" if r["course_name"] else ""
+        when = fmt_slots(r["slots"]) or "TBA"
+        lines.append(
+            f"- {r['course_code']}{cname} · {r['instructor'] or 'TBA'} · {when} · "
+            f"{str(r['term']).title()} {r['year']} · [section_id: {r['id']}]"
+        )
+    return (
+        "\n\nPENDING SEAT ALERTS — the student was just notified (email + in-app) that a seat "
+        "opened in the section(s) below. This is what they mean by 'it', 'that seat', or 'yes "
+        "enroll me'. If they ask to grab/enroll, call stage_enrollment with the matching "
+        "course_code, term, year, and section_id — do NOT re-ask which course or re-run "
+        "propose_sections:\n" + "\n".join(lines)
+    )
 
 
 def build_agent(
@@ -171,7 +271,10 @@ def build_agent(
     The checkpointer (AsyncPostgresSaver) makes the graph durable — it can
     resume across server restarts and long approval pauses (spec §1).
     """
-    tools = make_tools(deps)
+    from keel.agent.tracing import get_tracer, traced_tools
+
+    _tracer = get_tracer()
+    tools = traced_tools(make_tools(deps))
     tool_names = {t.name for t in tools}
     llm_with_tools = llm.bind_tools(tools)
 
@@ -197,14 +300,26 @@ def build_agent(
         context: ContextEnvelope = state["context"]
         snapshot = state.get("student_snapshot")
         system = _system_prompt(context, snapshot)
+        # Fold in any out-of-band seat-open alert so a plain "yes, enroll me" resolves to the
+        # right section instead of confusing the agent (the alert isn't in the chat history).
+        system += await _pending_seat_alerts(deps, context.tenant_id, context.student_id)
 
         history = [SystemMessage(content=system)] + list(state.get("messages", []))
-        response = await llm_with_tools.ainvoke(history)
+        with _tracer.start_as_current_span("agent.llm") as span:
+            span.set_attribute("keel.agent.iteration", count)
+            span.set_attribute("keel.tenant_id", str(context.tenant_id))
+            response = await llm_with_tools.ainvoke(history)
+            tool_calls = getattr(response, "tool_calls", []) or []
+            span.set_attribute("keel.agent.tool_calls", [c["name"] for c in tool_calls])
+            span.set_attribute(
+                "keel.agent.response_preview",
+                str(response.content)[:500] if response.content else "<empty>",
+            )
 
         _log.info(
             "agent.llm_node",
             iteration=count,
-            tool_calls=len(getattr(response, "tool_calls", []) or []),
+            tool_calls=len(tool_calls),
             content_type=type(response.content).__name__,
             content_preview=str(response.content)[:120] if response.content else "<empty>",
             tenant_id=context.tenant_id,
@@ -379,9 +494,20 @@ def build_agent(
         {"tools": "tools", "stage": "stage", END: END},
     )
     graph.add_edge("tools", "llm")
-    graph.add_edge("stage", "interrupt")  # after stage_* tool runs, interrupt
+    # After a stage_* tool runs: pause for approval only if it actually staged an
+    # action (has action_id); on a ToolError, return to the LLM so it can explain
+    # the failure and offer an alternative (e.g. waitlist) — see _after_stage.
+    graph.add_conditional_edges(
+        "stage",
+        _after_stage,
+        {"interrupt": "interrupt", "llm": "llm"},
+    )
     graph.add_edge("interrupt", "execute")  # after human approves, execute
-    graph.add_edge("execute", "llm")  # agent continues after write
+    # Execution is terminal for the approval resume: the execute_node already produced
+    # the authoritative result message (e.g. "Enrolled in 2 section(s) ✓"). Going back to
+    # the LLM here made it re-narrate a confusing "please approve" wrap-up AFTER the write
+    # already happened — so end the turn on the real result instead.
+    graph.add_edge("execute", END)
 
     return graph.compile(checkpointer=checkpointer, interrupt_before=["interrupt"])
 
@@ -445,6 +571,62 @@ async def _dispatch_execute(
             )
         return str(tx_result.message)
 
+    elif action_type in ("graduation", "major_change", "petition", "escalate"):
+        # Institutional F1–F4: the write services manage their own RLS-scoped
+        # transaction; here we invoke them with approved=True (reached ONLY on an
+        # approved resume) from the FROZEN payload, then mark the action executed.
+        from keel.services.actions import ActionRepo as _AR2
+        from keel.services.actions import institutional as _inst
+
+        message: str
+        if action_type == "graduation":
+            r = await _inst.apply_graduation(
+                deps.session_factory,
+                tenant_id=tenant_id,
+                student_id=student_id,
+                program=str(payload.get("program", "")),
+                approved=True,
+            )
+            message = r.message
+        elif action_type == "major_change":
+            r = await _inst.request_major_change(
+                deps.session_factory,
+                tenant_id=tenant_id,
+                student_id=student_id,
+                target_program_id=str(payload.get("target_program_id", "")),
+                impact_summary=str(payload.get("impact_summary", "")),
+                approved=True,
+            )
+            message = r.message
+        elif action_type == "petition":
+            r = await _inst.submit_petition(
+                deps.session_factory,
+                tenant_id=tenant_id,
+                student_id=student_id,
+                course_id=str(payload.get("course_id", "")),
+                justification=str(payload.get("justification", "")),
+                draft=str(payload.get("draft", "")),
+                approved=True,
+            )
+            message = r.message
+        else:  # escalate
+            er = await _inst.escalate(
+                deps.session_factory,
+                tenant_id=tenant_id,
+                student_id=student_id,
+                reason=str(payload.get("reason", "")),
+                program=payload.get("program"),
+                handoff_summary=str(payload.get("handoff_summary", "")),
+                student_name=str(payload.get("student_name", "")),
+                approved=True,
+            )
+            message = er.message
+
+        # Mark the action executed (its own audit row was written by the service).
+        async with _ts(deps.session_factory, tenant_id) as session:
+            await _AR2.set_executed(session, action_id)
+        return message
+
     else:
         return f"Unknown action type: {action_type}"
 
@@ -455,11 +637,14 @@ async def run_agent(
     compiled_graph: Any,
     redis: aioredis.Redis,
     session_ttl: int,
-) -> str:
-    """Run one turn of the agent and return the final text response.
+) -> AgentResult:
+    """Run one turn of the agent and return its result.
 
     Loads session history from Redis, runs the graph, saves updated history.
-    Redacts the response before returning.
+    Redacts the response before returning. When the graph pauses for human
+    approval (a stage_* tool ran and the graph is suspended before ``interrupt``),
+    the result carries ``action_id`` + ``pending_approval=True`` so the widget can
+    render the Approve/Decline control.
     """
     history_dicts = await _load_session_history(redis, envelope.tenant_id, envelope.session_id)
     snapshot = await _load_snapshot(redis, envelope.tenant_id, envelope.student_id)
@@ -482,26 +667,71 @@ async def run_agent(
         "student_snapshot": snapshot,
     }
 
-    config = {
-        "configurable": {
-            "thread_id": f"{envelope.tenant_id}:{envelope.session_id}",
-        }
-    }
+    graph_thread_id = f"{envelope.tenant_id}:{envelope.session_id}"
+    config = {"configurable": {"thread_id": graph_thread_id}}
 
+    # Bind the VERIFIED identity (from the widget JWT, carried on the envelope) so
+    # tools ignore any LLM-supplied tenant_id/student_id — closing the cross-tenant
+    # vector where an injection could scope a tool to another tenant (spec §11) — and
+    # the real graph thread_id so stage tools record the resumable thread correctly.
+    from keel.agent.identity import reset_request_identity, set_request_identity
+    from keel.agent.plan_channel import bind_plan_channel, collected_plans, reset_plan_channel
+    from keel.agent.tracing import get_tracer
+
+    _identity_token = set_request_identity(envelope.tenant_id, envelope.student_id, graph_thread_id)
+    # G3: bind a per-turn collector so propose_plan can surface structured plan
+    # cards back up to this response (see plan_channel for why a mutable container).
+    _plan_token = bind_plan_channel()
+    turn_plans: list[dict[str, Any]] = []
     try:
-        final_state = await compiled_graph.ainvoke(initial_state, config=config)
+        # Parent span for the turn — the LLM-step and per-tool spans nest under it,
+        # and the auto-instrumented DB/Redis/HTTP spans attach beneath those.
+        with get_tracer().start_as_current_span("agent.turn") as span:
+            span.set_attribute("keel.tenant_id", str(envelope.tenant_id))
+            span.set_attribute("keel.session_id", str(envelope.session_id))
+            span.set_attribute("keel.agent.message_preview", envelope.message[:500])
+            final_state = await compiled_graph.ainvoke(initial_state, config=config)
+        turn_plans = collected_plans()
     except Exception as exc:
         _log.error("agent.run_failed", error=str(exc), session_id=envelope.session_id)
-        return "I encountered an error processing your request. Please try again."
+        return AgentResult(text="I encountered an error processing your request. Please try again.")
+    finally:
+        reset_request_identity(_identity_token)
+        reset_plan_channel(_plan_token)
 
     messages = final_state.get("messages", [])
-    response_text = ""
-    for msg in reversed(messages):
-        if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
-            response_text = _extract_text(msg.content)
-            break
-    if not response_text:
-        response_text = "I was unable to generate a response. Please try again."
+
+    # Did the graph pause for approval? interrupt_before=["interrupt"] suspends the
+    # graph after a stage_* tool ran, with the next node = "interrupt".
+    pending_action_id: str | None = None
+    pending_summary: str | None = None
+    try:
+        snap = await compiled_graph.aget_state(config)
+        if "interrupt" in (snap.next or ()):
+            for msg in reversed(messages):
+                if isinstance(msg, ToolMessage) and isinstance(msg.content, str):
+                    try:
+                        data = json.loads(msg.content)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if isinstance(data, dict) and data.get("action_id"):
+                        pending_action_id = str(data["action_id"])
+                        pending_summary = data.get("message")
+                        break
+    except Exception as exc:  # noqa: BLE001 — pause detection is best-effort
+        _log.warning("agent.pause_detect_failed", error=str(exc))
+
+    if pending_action_id:
+        # The staged action's summary is the message the student approves against.
+        response_text = pending_summary or "Please review and approve the action above."
+    else:
+        response_text = ""
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
+                response_text = _extract_text(msg.content)
+                break
+        if not response_text:
+            response_text = "I was unable to generate a response. Please try again."
 
     response_text = redact(response_text)
 
@@ -517,5 +747,11 @@ async def run_agent(
         tenant_id=envelope.tenant_id,
         iterations=final_state.get("iteration_count", 0),
         response_len=len(response_text),
+        pending_approval=bool(pending_action_id),
     )
-    return response_text
+    return AgentResult(
+        text=response_text,
+        action_id=pending_action_id,
+        pending_approval=bool(pending_action_id),
+        plans=turn_plans,
+    )

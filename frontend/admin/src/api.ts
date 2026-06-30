@@ -86,6 +86,36 @@ export async function uploadDocument(file: File, chunkType: string): Promise<Rag
   return handleResponse<RagUploadResponse>(res);
 }
 
+// ── Admin: RAG document management (list / view / edit / delete) ───────────────
+
+export interface RagDocument {
+  filename: string;
+  chunks: number;
+  updated_at: string | null;
+}
+
+export async function listRagDocuments(): Promise<RagDocument[]> {
+  const r = await req<{ documents: RagDocument[] }>('/admin/rag/documents');
+  return r.documents;
+}
+
+export async function getRagDocument(filename: string): Promise<{ filename: string; content: string }> {
+  return req(`/admin/rag/documents/${encodeURIComponent(filename)}`);
+}
+
+export async function updateRagDocument(filename: string, content: string): Promise<RagUploadResponse> {
+  return req(`/admin/rag/documents/${encodeURIComponent(filename)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function deleteRagDocument(
+  filename: string,
+): Promise<{ filename: string; deleted_chunks: number; blob_deleted: boolean }> {
+  return req(`/admin/rag/documents/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+}
+
 // ── Admin: Widget Config ──────────────────────────────────────────────────────
 
 export interface WidgetConfig {

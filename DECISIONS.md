@@ -799,3 +799,328 @@ Secure` and a more complex setup for cross-origin cookie use.
 **Rejected.** Synchronous erase in the request path — too slow and blocks the response for large tenants. Silent erase without confirmation — unrecoverable mistake if tenant name is mistyped.
 
 ---
+## Post-integration remediation (audit fixes)
+
+A remediation pass after the frontend/backend integration restored several
+properties that had regressed. Each is summarized here; DESIGN.md is the as-built
+record.
+
+### D-R-001 — `/actions/*` authenticate with the verified widget JWT (not headers)
+
+**Decision.** The approve/reject endpoints now derive identity from the verified
+widget Bearer JWT (`get_widget_context` + `verify_origin_or_403`) — the same
+dependency `/chat` uses. The prior `X-Student-Id`/`X-Tenant-Id` header scheme is
+removed. **Why.** Those headers were spoofable (anyone could approve any action by
+setting them) and the widget never sent them, so approval always 401'd — the demo
+spine was broken at the contract layer. **Rejected.** Keeping the placeholder
+headers "until later" — it is both a critical auth hole and a broken contract.
+
+### D-R-002 — Identity + thread_id are bound from the verified context, never the LLM
+
+**Decision.** `run_agent` binds the verified `tenant_id`/`student_id` and the real
+graph `thread_id` into a contextvar; write/stage tools call `resolve_identity` /
+`resolve_thread_id`, which override any LLM-emitted values. **Why.** Tools opened a
+tenant session from an LLM-supplied `tenant_id` (a cross-tenant vector under
+injection), and the LLM-supplied `thread_id` was garbage (it echoed the student_id),
+so the approval resume targeted a non-existent checkpoint and the write silently
+never executed. **Rejected.** LangGraph `InjectedState` across every tool — correct
+but high-churn; the contextvar override is behavior-preserving and lower-risk. Read
+tools still rely on RLS + per-query filtering (residual, documented in DESIGN §10).
+
+### D-R-003 — All writes (incl. institutional F1–F4) go through the gated action pattern
+
+**Decision.** The petition tool no longer calls its service with `approved=True`;
+all four institutional tools now *stage* a pending action (migration 0010 extends
+`ck_actions_type`) and execute only on an approved resume, exactly like enrollment.
+**Why.** The petition path let the agent (or an injection) file a request with no
+approval, contradicting the injection-safety property; F1/F2/F4 had no wired
+execution path at all. Now every filing is gated and reaches the registrar queue
+only after approval.
+
+### D-R-004 — Execution-time re-validation + capacity locking
+
+**Decision.** `execute_enrollment_tx` and `fulfill_waitlist_tx` re-check the
+registration hold and re-check capacity under `SELECT … FOR UPDATE` before inserting,
+and stamp `source='keel'`. **Why.** The prior code inserted unconditionally and only
+the counter UPDATE was capacity-gated → overbooking + counter drift; holds placed
+during the approval window were ignored; and Keel writes weren't marked "via Keel".
+
+### D-R-005 — Workers enumerate tenants then scan under RLS; scheduler thread added
+
+**Decision.** Every worker job lists active tenants from the non-RLS `tenants` table
+and processes each inside a `tenant_session`; the worker entrypoint runs a scheduler
+thread that enqueues the recurring jobs. **Why.** `keel_app` is NOBYPASSRLS, so the
+old unscoped scans of `outbox`/`sections`/`actions` matched `tenant_id = NULL` and
+returned zero rows — the entire outbox/notify/waitlist/expiry tier was silently dead
+— and nothing enqueued the periodic jobs.
+
+### D-R-006 — Repository layer made real and used by the write/ledger path
+
+**Decision.** `repositories/core.py` adds tenant-scoped `LedgerRepository` /
+`ActionsRepository` (asserting row tenant); `audit_write`/`outbox_write` and the
+action insert/expire delegate to them (zero caller churn). **Why.** The repository
+layer (defense-in-depth layer 2, and the production SIS-seam boundary) existed only
+as an unused base class. Read paths already filter `tenant_id` on every query under
+RLS; the write surface now also passes through the repository boundary.
+
+### D-R-007 — Stale-migration / contract fixes
+
+**Decision.** (a) Migration 0009 `widget_config_all()` returns the 4 columns the app
+queries (it had dropped `persona`). (b) The portal's `outbox` insert includes the
+NOT-NULL `kind` column (it was rolling back the registrar decision tx). (c)
+`usage_event.kind` is `'llm'` (the constraint forbids `'agent'`/`'classifier'`, so
+cost rows were silently failing). (d) `mint-token` verifies `student ∈ tenant`
+(per-portal secrets remain a recommended hardening). **Why.** Code/migration drift
+from prior fix-ups; each silently broke a feature (persona prompt, registrar
+notifications, cost view, cross-tenant mint).
+
+## Second remediation wave (auth regression + remaining M/L + DESIGN §10 gaps)
+
+### D-R-008 — `keel_definer` role restores cross-tenant SECURITY DEFINER functions
+
+**Decision.** A dedicated `keel_definer` role (`NOLOGIN BYPASSRLS`, created by the
+superuser in `scripts/db-init.sh`, granted to `keel_app` as membership) owns every
+SECURITY DEFINER cross-tenant function (`keel_find_user_by_email`, `portal_*`,
+`platform_*`, `widget_*`, `tenant_names_all`). Migration 0011 reassigns them and
+grants `SELECT`; `db-init.sh` adds `ALTER DEFAULT PRIVILEGES … GRANT SELECT … TO
+keel_definer` for future tables. **Why.** A prior ownership change set these to
+`keel_app` (`NOBYPASSRLS`), so they ran *under* RLS with no tenant context and
+returned only `tenant_id IS NULL` rows — every tenant_admin/student/portal login
+silently 401'd; only the operator could log in. `keel_app` stays `NOBYPASSRLS`
+(isolation intact); only these vetted functions bypass, and via a no-login role,
+not the `postgres` superuser. **Rejected.** Granting `keel_app` BYPASSRLS (destroys
+the isolation guarantee) and owning app functions by `postgres` (a far larger
+privilege than needed). Also repaired in the same pass: all 17 auth rows shared one
+constant bcrypt hash (a stale seeding artifact matching no documented password) —
+reset in place to the documented demo passwords (the current seed already hashes
+per-user, so fresh builds are correct).
+
+### D-R-009 — Remaining Medium/Low audit items
+
+**Decision.** **M-4:** `db_with_tenant` now binds `app.tenant_id` inside an explicit
+`session.begin()` so the `SET LOCAL` shares one transaction with the handler's
+queries (mirrors `tenant_session`) — previously it could drift and make RLS fail
+closed. **L-2:** dropped the unused `authorization` param from `require_role`.
+**L-3:** narrowed best-effort `except Exception` to the operational error
+(`SQLAlchemyError` for usage accounting, `RedisError`/`ValueError`/`TypeError` for
+the Redis cache) so genuine bugs surface; the deliberate request-protection
+boundaries (`execute_node`, `run_agent`) stay broad-but-error-logged. **L-4:** no
+action — migration 0006 already drops/recreates `ck_users_role` with all four roles
+(the audit flagged 0001 in isolation). **M-5/M-6:** unchanged by decision — the
+state-machine approval (SPEC §8 annotated) and the single `/keel` role-based console.
+
+### D-R-010 — Read tools bind the verified identity (G1 / H-2 closed)
+
+**Decision.** All 17 read/advisory tools (`advising`, `guidance`, `planning`) now
+call `resolve_identity` / `resolve_tenant` at entry, overriding any LLM-supplied
+`tenant_id`/`student_id` with the verified context — matching the write tools.
+**Why.** Tools opened `tenant_session(UUID(tenant_id))` from an LLM argument, so a
+prompt injection could scope a read to another tenant. The H-2 residual (write path
+only) is now closed on the read path too. Test-safe: the resolver falls back to the
+arguments when no identity is bound (direct unit-test calls).
+
+### D-R-011 — Per-portal service secrets (G2)
+
+**Decision.** Each portal presents its own `portal_service_secret_<slug>` (Vault);
+the API maps `{tenant_id: secret}` at startup and `mint-token` lets a secret mint
+**only its own tenant's** tokens (cross-tenant → 403). The shared
+`portal_service_secret` stays as a legacy fallback (authorizes any tenant). **Why.**
+A single shared secret meant a leak at one university could attempt to mint another
+tenant's tokens; per-portal secrets + the existing `student ∈ tenant` check make
+that impossible. Verified: Northane secret → Northane 200, → Summit 403, bogus 401.
+
+### D-R-012 — Structured plan cards surfaced from the agent (G3)
+
+**Decision.** `propose_plan` emits engine-verified, risk/workload-scored candidates
+as structured `PlanData` through a per-turn mutable-list channel
+(`agent/plan_channel.py`); `run_agent` → `RouterResponse` → `ChatResponse.plans`
+carry them to the widget (which already renders `PlanCard`/`PlanTabsCard`). **Why.**
+The structured candidates never reached the response, so the widget only showed the
+model's prose. A mutable container (not a ContextVar value) is used because the flow
+is child→parent and LangGraph may run nodes under a copied context. Verified: `/chat`
+returns 3 cards with codes/credits/risk/workload.
+
+### D-R-013 — Pluggable email transport; ON in simulation, Keel-actions only (G4)
+
+**Decision.** `infra/email.py` provides `LoggingEmailSender` (simulation — logs the
+send, no real mail) and `SMTPEmailSender` (real `smtplib`), selected by
+`get_email_sender` from `keel_smtp_*`. Email is **ON by default**
+(`keel_email_enabled=True`); with SMTP disabled the send is simulated. Every Keel
+email is addressed to a single demo inbox (`keel_email_simulate_to`,
+`mousaelisar@gmail.com`) since there are no real per-student mailboxes. **Only
+Keel-originated events email** — an explicit allowlist (`_KEEL_EMAIL_EVENTS`:
+enrollment/waitlist/seat/petition/graduation/major-change/escalation). SIS-domain
+events the portal writes to the outbox (`request.approved` / `request.rejected`,
+i.e. a registrar decision) are skipped: that outcome is the university's to
+communicate, not Keel's. **Why.** `_send_email` was a hard-coded log stub; this makes
+real delivery a config change (set `keel_smtp_enabled=true` + host), keeps the demo
+safe (no real mail), and ensures Keel never claims credit for an SIS action. The
+outbox remains the delivery guarantee; a transport failure propagates so RQ retries.
+Verified: Keel actions → simulated send to the demo inbox; `request.*` → skipped.
+
+### D-R-014 — End-to-end tracing: Jaeger + OTel auto-instrumentation + agent spans
+
+**Decision.** Make the existing OTel scaffolding actually emit traces, into a
+single Jaeger UI:
+- **Backend:** an all-in-one **Jaeger** service in compose (UI `:16686`, OTLP gRPC
+  `:4317`); `OTEL_EXPORTER_OTLP_ENDPOINT` defaults to `http://jaeger:4317` so traces
+  flow with no `.env` change (empty still disables cleanly).
+- **Auto-instrumentation** (`infra/tracing.instrument_libraries`): SQLAlchemy (engine
+  queries — the deterministic engine's reads + repos), Redis (session/cache), and
+  **httpx** (the outbound LLM/Gemini, Cohere rerank, and model-server calls — this is
+  what makes the "LLM" step visible with timing, no LLM-specific SDK needed). Wired
+  in the API lifespan once the engine/Redis singletons exist.
+- **Agent spans** (`agent/tracing.py`, kept out of `infra/` because it imports
+  LangChain types): a parent `agent.turn` span, an `agent.llm` span per step
+  (records the model's tool-call decisions + response preview), and per-tool
+  `agent.tool.<name>` spans (input args + output preview) via best-effort
+  `model_copy` wrapping of each tool's coroutine.
+- **Worker:** same `configure_tracing` + `instrument_libraries` in its entrypoint, so
+  outbox publish + notification delivery land in the same Jaeger UI as `keel-worker`.
+
+A chat turn now reads top-down: FastAPI request → `agent.turn` → `agent.llm` →
+`agent.tool.*` → SQLAlchemy/Redis/httpx child spans, each with inputs/outputs.
+
+**Why.** The scaffolding existed (`configure_tracing`, FastAPI instrumentation) but
+`OTEL_EXPORTER_OTLP_ENDPOINT` was empty and there was no backend, so spans went
+nowhere; only FastAPI was instrumented (no DB/cache/LLM visibility) and the agent
+emitted no spans at all — exactly the "watch each step with its input/output" need.
+All instrumentation is best-effort and never blocks boot; previews are capped
+(≤500 chars) and pass through `redact()` at egress so a span never carries a full
+transcript or PII. **Rejected (for now).** OpenLLMetry/`traceloop-sdk` and LangSmith
+— richer LLM-specific capture but a heavier dep / separate SaaS pane; deferred to
+STRETCH. The httpx spans already give per-call LLM timing in the same Jaeger UI.
+
+### D-R-015 — Portal lookups are RLS-scoped, not BYPASSRLS (shrink the DEFINER surface)
+
+**Decision.** The portal server (`frontend/portal/server/index.cjs`) no longer calls
+the `portal_*` SECURITY DEFINER functions. A portal instance always knows its own
+tenant (`PORTAL_TENANT`), and the `tenants` table has no RLS, so it now resolves its
+tenant_id (`resolvePortalTenantId`) and runs ordinary **RLS-scoped** queries inside
+`withTenantTx(tenantId, …)`:
+- **Login** resolves the tenant *first*, then looks up `portal_user` by email under
+  that tenant's RLS. A cross-portal email returns 0 rows → generic 401. The old
+  explicit "account does not belong to this portal" 403 is **gone — the tenant match
+  is now structural** (RLS), and 401 leaks less (no portal-membership enumeration).
+- **Student list** reads `students ⋈ users ⋈ tenants` RLS-scoped, replacing
+  `portal_list_students()` which fetched **all tenants** then filtered in JS.
+
+Migration **0012** then drops the three now-unused functions (`portal_find_by_email`,
+`portal_find_student` — already dead, never called — `portal_list_students`). **Why.**
+These bypassed RLS for a "pre-session" lookup that was never actually pre-session: the
+portal knew its tenant all along, so the bypass was unnecessary surface. After this,
+the only BYPASSRLS DEFINER functions left (D-R-008) are the genuinely cross-tenant
+ones: `keel_find_user_by_email` (Keel-console login — one host serves operator + both
+tenants' admins, so the tenant is unknown until the user is found), the operator
+aggregates (`platform_count_*`, `platform_usage_summary` — cross-tenant by role,
+aggregate-only), and the startup bootstrap reads (`tenant_names_all`,
+`widget_config_all`, `widget_origins_all`). **Rejected.** Detecting the tenant from
+the portal *Host* header — the per-tenant service secret (D-R-011) is a strictly
+stronger, non-spoofable signal we already have. (Completes the portal half of the
+STRETCH "shrink the BYPASSRLS surface" item.)
+
+---
+
+## Phase 6 demo-polish decisions
+
+### D-P6-001 — Re-registering a term overrides the prior registration (replace, don't reject)
+
+**Decision.** When an approved enrollment is executed for a term the student already
+has a registration in, the new plan **replaces** the prior one rather than being
+rejected or layered on top. In `execute_enrollment_tx` (the single write path used by
+both the agent and the portal button), after the new sections are secured we drop —
+in the **same transaction** — every prior `enrolled` row for the same `(term, year)`
+that is **not** part of the incoming registration (overlapping sections are kept, so
+there is no churn and no needless email). Each drop sets `status='dropped'` and
+decrements `sections.enrolled`. The audit row records `dropped_section_ids` alongside
+the new `enrollment_ids`.
+
+**Why.** A demo student re-running the planning loop for the same term would otherwise
+either hit a confusing "you already have a registration" wall or silently double-book.
+"Override" keeps the flow smooth and matches the mental model that *the approved plan
+is your registration for that term.*
+
+**Safety ordering.** The drop is deliberately performed **after** the new sections are
+enrolled and is **gated on `secured_count > 0`**. If every incoming section turned out
+full at execution time, nothing is dropped — a failed enrollment never leaves the
+student with a dropped prior plan and nothing in its place. Because the whole thing
+runs inside one `tenant_session` transaction, a mid-write error rolls back both the
+inserts and the drops together. A prior section that reappears in the new plan is
+reactivated (`dropped → enrolled`) rather than re-inserted, because the unique
+`(tenant_id, idempotency_key)` constraint forbids a second insert for the same
+`(student, section)`.
+
+**Deferred to a real add/drop implementation (future work — NOT in the demo).** This
+override is intentionally blunt. A production registrar flow should additionally:
+(1) **check the add/drop calendar** — silent replacement is only acceptable inside the
+open registration / add-drop window; outside it the drop must become a petition;
+(2) **alert the student** with an explicit "this will drop X, Y from your current
+schedule — confirm?" diff before writing, not just an after-the-fact note;
+(3) honour **withdrawal deadlines and `W` grade rules** (a late drop is a withdrawal,
+not a clean delete, and affects the transcript);
+(4) respect **tuition/financial-aid credit thresholds** (dropping below full-time can
+have billing and aid consequences);
+(5) keep **waitlist side-effects** consistent (dropping a seat should trigger the
+waitlist worker for that section). These are listed here so the simplification is on
+the record, not silently assumed.
+
+### D-P6-002 — The agent enrolls by course code; the engine resolves the section
+
+**Decision.** `stage_enrollment` now takes `course_codes + term + year`, not section
+UUIDs. The tool resolves each course to one open, conflict-free section itself
+(`_resolve_sections_for_courses`, a greedy time-conflict-free pick over open sections)
+and freezes the resolved `section_ids` on the action row. **Why.** The LLM only ever
+sees course codes (from `propose_plan`'s plan cards); it has no way to know section
+UUIDs, so the previous `section_ids`-typed tool made the agent give up and tell the
+student to "use the official registration portal" — the exact opposite of Keel's job.
+Resolving codes → sections server-side keeps section selection in the deterministic
+engine (per the core rule, the LLM never self-picks a write target) and lets the agent
+complete the enrollment it was asked to do. The frozen-payload `section_ids` and the
+`execute_enrollment_tx` contract are unchanged, so the approval/write/audit path and
+its safety tests are untouched.
+
+### D-P6-003 — Agentic, preference-aware section selection (registration-section-flow)
+
+**Decision.** Registration section choice is **agentic, not portal-style filtering**.
+The student states preferences in natural language ("no 8am, no Fridays"); the engine
+returns the open-section pool and the agent/engine pick a fitting, conflict-free,
+**open** section per course — extending D-P6-002. Concretely:
+
+- **The LLM picks sections, the engine verifies (mirrors the plan propose→verify loop).**
+  `propose_sections` (read-only; realises `SPEC.md §7`'s `search_sections`) returns each
+  open section per course with its `section_id`, day/time, instructor, seats, and whether
+  it meets the prefs. The LLM reasons over them and picks the best section per course, then
+  calls `stage_enrollment(section_ids=[...])`. `_verify_chosen_sections` re-verifies each
+  chosen id: exists, belongs to a requested course (an injected id for an unrelated course
+  is rejected), is open, and the set is conflict-free — invalid → `ToolError` → the LLM
+  repairs. This supersedes the older D-P6-002 "LLM never sees section UUIDs" stance: the
+  LLM may now choose sections because the engine re-verifies every one before staging.
+- **Fallback ("you pick for me"):** `stage_enrollment` with no `section_ids` runs
+  `_resolve_sections_for_courses`, which ranks pref-meeting sections first (greedy,
+  conflict-free) — the engine picks. Either path returns the chosen day/time + instructor;
+  the staged approval message shows the schedule and flags any pref-violating pick.
+- `propose_plan` now flags courses with **no open section** in the target term (verify()
+  checks prereqs/credits/offering, not live seats), so a plan is honest about
+  registrability — keep + flag, never silently drop.
+- Seed: two sections per course per offered term with synthetic instructors and varied
+  times (some 8am/Friday/full) so preferences discriminate and the
+  "full → waitlist / another term" branch is exercised (migration `0013_section_instructor`).
+
+**Why.** This is the project's core principle ("intelligence proposes, the engine
+verifies") applied to sections: the LLM does the fuzzy preference-matching; the engine
+owns legality (open + conflict-free) and still resolves the write target. The student
+approves a card showing the chosen schedule — they never hand-pick a section UUID.
+
+**Safety.** Unchanged: `propose_sections` is read-only; `stage_enrollment` only stages;
+`execute_enrollment_tx` re-validates at write. No tool gained an `approved` field. The
+write-action safety + agent-node tests remain green; new tests in
+`tests/unit/test_section_selection.py` cover the preference ranking and the
+stage-error→LLM routing.
+
+**Related fix (Piece 1).** `agent/graph.py` now routes a failed stage tool (a `ToolError`
+with no `action_id`) **back to the LLM** instead of suspending at `interrupt` — so the
+error reaches the student conversationally (e.g. offer the waitlist) instead of looping.
+
+**Deferred.** Saved/named plans surfacing (A4) and a richer structured `SectionCard`
+widget component are deferred to `STRETCH.md`; the chosen schedule is surfaced today via
+the staged approval message text.

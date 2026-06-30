@@ -16,8 +16,9 @@ x-app-env: &app-env
   MINIO_ENDPOINT: ${MINIO_ENDPOINT}
   MINIO_BUCKET: ${MINIO_BUCKET}
   MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
-  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT}
-  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME}
+  # Defaults to the in-stack Jaeger collector so traces flow with no .env change.
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-keel-api}
   LANGSMITH_TRACING: ${LANGSMITH_TRACING}
   MODEL_SERVER_URL: ${MODEL_SERVER_URL}
   VAULT_ADDR: ${VAULT_ADDR}
@@ -40,9 +41,18 @@ x-app-env: &app-env
   RERANK_TOP_N: ${RERANK_TOP_N:-5}
   SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-1800}
   # Phase 5 addendum: demo passwords (Vault is the authoritative source at runtime)
-  KEEL_OPERATOR_PASSWORD: ${KEEL_OPERATOR_PASSWORD:-keel-operator-demo}
-  KEEL_ADMIN_PASSWORD: ${KEEL_ADMIN_PASSWORD:-keel-admin-demo}
-  KEEL_PORTAL_PASSWORD: ${KEEL_PORTAL_PASSWORD:-keel-portal-demo}
+  KEEL_OPERATOR_PASSWORD: ${KEEL_OPERATOR_PASSWORD:-123}
+  KEEL_ADMIN_PASSWORD: ${KEEL_ADMIN_PASSWORD:-123}
+  KEEL_PORTAL_PASSWORD: ${KEEL_PORTAL_PASSWORD:-123}
+  # G4 email: simulated by default; set KEEL_SMTP_ENABLED=true + creds in .env to send.
+  KEEL_EMAIL_ENABLED: ${KEEL_EMAIL_ENABLED:-true}
+  KEEL_EMAIL_SIMULATE_TO: ${KEEL_EMAIL_SIMULATE_TO:-mousaelisar@gmail.com}
+  KEEL_SMTP_ENABLED: ${KEEL_SMTP_ENABLED:-false}
+  KEEL_SMTP_HOST: ${KEEL_SMTP_HOST:-}
+  KEEL_SMTP_PORT: ${KEEL_SMTP_PORT:-587}
+  KEEL_SMTP_USER: ${KEEL_SMTP_USER:-}
+  KEEL_SMTP_PASSWORD: ${KEEL_SMTP_PASSWORD:-}
+  KEEL_EMAIL_FROM: ${KEEL_EMAIL_FROM:-noreply@keel.local}
 
 services:
   db:
@@ -71,6 +81,18 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    networks: [keel]
+
+  # Tracing backend. All-in-one Jaeger: receives OTLP (gRPC 4317) from api +
+  # worker and serves the trace UI at http://localhost:16686. No persistence
+  # (in-memory) — this is local dev observability, not a prod store.
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC (exposed for local debugging)
     networks: [keel]
 
   minio:
@@ -123,14 +145,18 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       KEEL_JWT_SIGNING_KEY: ${KEEL_JWT_SIGNING_KEY}
       KEEL_WIDGET_TOKEN_SECRET: ${KEEL_WIDGET_TOKEN_SECRET}
-      # Phase 5: shared secret for portal→keel service-to-service auth (D-P5-005)
+      # Phase 5: shared secret for portal→keel service-to-service auth (D-P5-005).
+      # Kept as a legacy fallback; per-portal secrets below (G2) are preferred.
       KEEL_PORTAL_SERVICE_SECRET: ${KEEL_PORTAL_SERVICE_SECRET}
+      # G2: per-portal service secrets — each portal can mint only its own tenant.
+      KEEL_PORTAL_SERVICE_SECRET_NORTHANE: ${KEEL_PORTAL_SERVICE_SECRET_NORTHANE:-${KEEL_PORTAL_SERVICE_SECRET}}
+      KEEL_PORTAL_SERVICE_SECRET_SUMMIT: ${KEEL_PORTAL_SERVICE_SECRET_SUMMIT:-${KEEL_PORTAL_SERVICE_SECRET}}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       COHERE_API_KEY: ${COHERE_API_KEY}
       # Phase 5 addendum: operator / admin / portal demo passwords
-      KEEL_OPERATOR_PASSWORD: ${KEEL_OPERATOR_PASSWORD:-keel-operator-demo}
-      KEEL_ADMIN_PASSWORD: ${KEEL_ADMIN_PASSWORD:-keel-admin-demo}
-      KEEL_PORTAL_PASSWORD: ${KEEL_PORTAL_PASSWORD:-keel-portal-demo}
+      KEEL_OPERATOR_PASSWORD: ${KEEL_OPERATOR_PASSWORD:-123}
+      KEEL_ADMIN_PASSWORD: ${KEEL_ADMIN_PASSWORD:-123}
+      KEEL_PORTAL_PASSWORD: ${KEEL_PORTAL_PASSWORD:-123}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -141,6 +167,8 @@ services:
           jwt_signing_key=$KEEL_JWT_SIGNING_KEY \
           widget_token_secret=$KEEL_WIDGET_TOKEN_SECRET \
           portal_service_secret=$KEEL_PORTAL_SERVICE_SECRET \
+          portal_service_secret_northane=$KEEL_PORTAL_SERVICE_SECRET_NORTHANE \
+          portal_service_secret_summit=$KEEL_PORTAL_SERVICE_SECRET_SUMMIT \
           gemini_api_key=$GEMINI_API_KEY \
           cohere_api_key=$COHERE_API_KEY \
           keel_operator_password=$KEEL_OPERATOR_PASSWORD \
@@ -218,6 +246,8 @@ services:
         condition: service_healthy
       vault-init:
         condition: service_completed_successfully
+      jaeger:
+        condition: service_started
     networks: [keel]
 
   worker:
@@ -234,6 +264,8 @@ services:
         condition: service_healthy
       vault-init:
         condition: service_completed_successfully
+      jaeger:
+        condition: service_started
     networks: [keel]
 
   # One-shot: pull the current production model artifacts (grad-risk + intent)
@@ -293,7 +325,8 @@ services:
       PORTAL_TENANT: "northane"
       DATABASE_URL: "postgresql://keel_app:${KEEL_APP_PASSWORD}@db:5432/keel"
       KEEL_API_URL: "http://api:8000"
-      PORTAL_SERVICE_SECRET: ${KEEL_PORTAL_SERVICE_SECRET}
+      # G2: this portal presents its own per-tenant secret (falls back to shared).
+      PORTAL_SERVICE_SECRET: ${KEEL_PORTAL_SERVICE_SECRET_NORTHANE:-${KEEL_PORTAL_SERVICE_SECRET}}
       SESSION_SECRET: ${KEEL_JWT_SIGNING_KEY}
       NODE_ENV: production
     ports:
@@ -324,7 +357,8 @@ services:
       PORTAL_TENANT: "summit"
       DATABASE_URL: "postgresql://keel_app:${KEEL_APP_PASSWORD}@db:5432/keel"
       KEEL_API_URL: "http://api:8000"
-      PORTAL_SERVICE_SECRET: ${KEEL_PORTAL_SERVICE_SECRET}
+      # G2: this portal presents its own per-tenant secret (falls back to shared).
+      PORTAL_SERVICE_SECRET: ${KEEL_PORTAL_SERVICE_SECRET_SUMMIT:-${KEEL_PORTAL_SERVICE_SECRET}}
       SESSION_SECRET: ${KEEL_JWT_SIGNING_KEY}
       NODE_ENV: production
     ports:

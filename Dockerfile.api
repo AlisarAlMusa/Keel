@@ -47,13 +47,6 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY src ./src
-COPY alembic.ini ./
-COPY migrations ./migrations
-COPY scripts ./scripts
-COPY data ./data
-RUN uv sync --frozen --no-dev
-
 # ── Stage 3: lean runtime ─────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
@@ -63,6 +56,11 @@ WORKDIR /app
 
 # Python app
 COPY --from=py-builder /app /app
+COPY src ./src
+COPY alembic.ini ./
+COPY migrations ./migrations
+COPY scripts ./scripts
+COPY data ./data
 
 # Built frontend assets — mounted at the paths FastAPI's StaticFiles expects
 # (see main.py _FRONTEND_ROOT / "widget" / "dist" and "admin" / "dist")
@@ -73,6 +71,7 @@ COPY --from=node-builder /frontend/admin/dist  ./frontend/admin/dist
 COPY frontend/static ./frontend/static
 
 ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src" \
     UV_PYTHON_DOWNLOADS=never
 
 EXPOSE 8000

@@ -41,7 +41,8 @@ MANDATORY TOOL RULES (violating these is a bug — the student sees wrong inform
    call audit_degree to understand where the student is, then rag_search to look up a policy,
    then propose_plan to build a plan. Use your judgment. The available tools are:
    audit_degree, rag_search, predict_risk, gpa_estimate, simulate_whatif,
-   propose_plan, save_plan, load_plan, activate_plan, swap_course,
+   propose_plan, plan_graduation, propose_sections,
+   load_grad_plan, delete_grad_plan, swap_grad_plan_course,
    stage_enrollment, stage_waitlist_join, stage_waitlist_leave.
    Only call tools from this list. If no tool fits, answer concisely from context.
 

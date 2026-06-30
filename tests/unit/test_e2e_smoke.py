@@ -15,6 +15,7 @@ from uuid import uuid4
 
 import pytest
 
+from keel.agent.result import AgentResult
 from keel.domain.schemas import ContextEnvelope, IntentPrediction, StudentPreference
 from keel.infra.guardrails import check_input
 from keel.services.router import route
@@ -58,7 +59,7 @@ async def test_plan_message_reaches_agent() -> None:
         "  • MATH210: Calculus II (3 cr)\n"
         "This plan has passed all prerequisite, credit, and offering checks."
     )
-    mock_agent_run = AsyncMock(return_value=expected_response)
+    mock_agent_run = AsyncMock(return_value=AgentResult(text=expected_response))
 
     result = await route(
         envelope=envelope,
@@ -116,7 +117,7 @@ async def test_low_confidence_falls_back_to_agent() -> None:
     )
 
     mock_llm_lite = MagicMock()
-    mock_agent_run = AsyncMock(return_value="I'll help you with your courses.")
+    mock_agent_run = AsyncMock(return_value=AgentResult(text="I'll help you with your courses."))
 
     result = await route(
         envelope=envelope,
@@ -139,7 +140,7 @@ async def test_model_server_failure_fails_safe_to_agent() -> None:
     mock_model_client.predict_intent = AsyncMock(return_value=None)  # model server down
 
     mock_llm_lite = MagicMock()
-    mock_agent_run = AsyncMock(return_value="Let me help you plan.")
+    mock_agent_run = AsyncMock(return_value=AgentResult(text="Let me help you plan."))
 
     result = await route(
         envelope=envelope,
@@ -155,8 +156,8 @@ async def test_model_server_failure_fails_safe_to_agent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stub_label_returns_stub_text() -> None:
-    """A stub label (my_info) returns a canned response without LLM or agent."""
+async def test_my_info_routes_to_agent() -> None:
+    """my_info now routes to the agent (the my_info tool reads the real student record)."""
     envelope = _make_envelope("Show me my student info")
 
     mock_model_client = AsyncMock()
@@ -165,7 +166,7 @@ async def test_stub_label_returns_stub_text() -> None:
     )
 
     mock_llm_lite = MagicMock()
-    mock_agent_run = AsyncMock()
+    mock_agent_run = AsyncMock(return_value=AgentResult(text="Major: Computer Science…"))
 
     result = await route(
         envelope=envelope,
@@ -176,9 +177,8 @@ async def test_stub_label_returns_stub_text() -> None:
     )
 
     assert result.label == "my_info"
-    assert result.routed_to_agent is False
-    assert "not yet available" in result.text or "advisor" in result.text.lower()
-    mock_agent_run.assert_not_called()
+    assert result.routed_to_agent is True
+    mock_agent_run.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

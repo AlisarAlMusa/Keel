@@ -44,6 +44,7 @@ from keel.api.routers import auth_admin as auth_admin_router
 from keel.api.routers import chat as chat_router
 from keel.api.routers import health
 from keel.api.routers import internal as internal_router
+from keel.api.routers import plans as plans_router
 from keel.api.routers import platform as platform_router
 from keel.config import Settings, get_settings
 from keel.domain.models import Term
@@ -151,6 +152,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.engine = engine
     app.state.session_factory = db_infra.create_session_factory(engine)
     app.state.redis = redis_infra.create_redis(settings.redis_url)
+    # Auto-instrument DB/cache/HTTP now that the singletons exist, so engine
+    # queries, Redis ops, and the LLM/model-server HTTP calls trace as child
+    # spans under each request (FastAPI span is the parent).
+    tracing.instrument_libraries(engine=engine)
     app.state.storage = storage_infra.create_s3_client(
         endpoint=settings.minio_endpoint,
         access_key=secrets["minio_access_key"],
@@ -207,6 +212,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Phase 5: warm widget config cache (origins + persona + tenant names)
         await _load_widget_config(app.state.session_factory, app.state)
 
+        # G2: per-portal service secrets. Map tenant_id -> that portal's own secret
+        # (Vault key `portal_service_secret_<slug>`), resolving slug -> tenant_id
+        # from the cache just loaded. The mint endpoint then only lets a portal's
+        # secret mint ITS OWN tenant's tokens — a leak at one university cannot
+        # mint another's. The shared `portal_service_secret` stays as a legacy
+        # fallback (authorizes any tenant) so nothing breaks if per-portal secrets
+        # are not provisioned.
+        slug_to_tid = {slug: tid for tid, slug, _ in app.state.tenant_names}
+        portal_secrets_by_tenant: dict[str, str] = {}
+        for _key, _val in secrets.items():
+            if _key.startswith("portal_service_secret_") and _val:
+                _slug = _key[len("portal_service_secret_") :]
+                _tid = slug_to_tid.get(_slug)
+                if _tid:
+                    portal_secrets_by_tenant[_tid] = _val
+        app.state.portal_service_secrets = portal_secrets_by_tenant
+        _log.info("portal_service_secrets_loaded", per_tenant=len(portal_secrets_by_tenant))
+
         _log.info("startup_complete")
         try:
             yield
@@ -221,19 +244,23 @@ def create_app() -> FastAPI:
 
     settings = get_settings()
 
-    # CORS — allow all frontend origins. Origin enforcement is done server-side
-    # via verify_origin_or_403; CORS is defense-in-depth.
+    # CORS — defense-in-depth only; the real boundary is the verified Bearer JWT
+    # plus the server-side origin check (verify_origin_or_403).
+    #
+    # keel-api authenticates exclusively via the Authorization header (widget JWT,
+    # admin/operator JWT) — never via cookies — so credentials must be DISABLED.
+    # `allow_origins=["*"]` with `allow_credentials=True` is rejected by browsers
+    # and would also be an over-broad credentialed surface; with credentials off,
+    # a wildcard origin for header-only auth is safe.
     cors_origins = settings.cors_allowed_origins or ["*"]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=[
             "Authorization",
             "Content-Type",
-            "X-Tenant-Id",
-            "X-Admin-Token",
             "X-Idempotency-Key",
         ],
     )
@@ -243,6 +270,7 @@ def create_app() -> FastAPI:
     app.include_router(chat_router.router)
     app.include_router(admin_router.router)
     app.include_router(actions_router.router)
+    app.include_router(plans_router.router)
     app.include_router(internal_router.router)
     # Phase 5 addendum: email+password login + platform operator
     app.include_router(auth_admin_router.router)

@@ -16,6 +16,7 @@ interface ScheduleProps {
 
 export function Schedule({ refreshSignal }: ScheduleProps) {
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
+  const [major, setMajor] = useState<{ major: string | null; program_code: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,6 +26,7 @@ export function Schedule({ refreshSignal }: ScheduleProps) {
     try {
       const data = await getSchedule();
       setEnrollments(data.enrollments);
+      setMajor(data.student ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load schedule');
     } finally {
@@ -90,7 +92,26 @@ export function Schedule({ refreshSignal }: ScheduleProps) {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-        <h2 className="page-heading" style={{ margin: 0 }}>My Schedule</h2>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap' }}>
+          <h2 className="page-heading" style={{ margin: 0 }}>My Schedule</h2>
+          {major?.major && (
+            <span
+              title="Your major of record — updates when a major change is approved"
+              style={{
+                fontFamily: 'Inter, system-ui, sans-serif',
+                fontSize: '0.8rem',
+                color: 'var(--text-muted)',
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: '999px',
+                padding: '3px 10px',
+              }}
+            >
+              Major: <strong style={{ color: 'var(--text)' }}>{major.major}</strong>
+              {major.program_code ? ` (${major.program_code})` : ''}
+            </span>
+          )}
+        </div>
         <button
           onClick={load}
           style={{

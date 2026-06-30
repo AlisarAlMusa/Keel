@@ -53,3 +53,42 @@ def instrument_fastapi(app: object) -> None:
         FastAPIInstrumentor.instrument_app(app)  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001
         _log.warning("fastapi_instrumentation_failed", error=type(exc).__name__)
+
+
+def instrument_libraries(*, engine: object | None = None) -> None:
+    """Auto-instrument the I/O libraries so DB, cache, and outbound HTTP calls
+    appear as child spans under each request/agent turn.
+
+    * SQLAlchemy  → every engine query (the deterministic engine's reads, repos).
+    * Redis       → session memory + cache hits/misses.
+    * httpx       → outbound calls: the LLM (Gemini), reranker (Cohere), and the
+                    model-server. This is what makes the "LLM" step visible in the
+                    trace with timing, without an LLM-specific SDK.
+
+    Each instrumentor is best-effort and idempotent — a missing optional package
+    or a double-call must never block boot. Called from both the API lifespan and
+    the worker entrypoint (the worker does DB/Redis/email I/O too).
+    """
+    if engine is not None:
+        try:
+            from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
+            # Async engines expose the real DBAPI engine as ``.sync_engine``.
+            sync_engine = getattr(engine, "sync_engine", engine)
+            SQLAlchemyInstrumentor().instrument(engine=sync_engine)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("sqlalchemy_instrumentation_failed", error=type(exc).__name__)
+
+    try:
+        from opentelemetry.instrumentation.redis import RedisInstrumentor
+
+        RedisInstrumentor().instrument()
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("redis_instrumentation_failed", error=type(exc).__name__)
+
+    try:
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+        HTTPXClientInstrumentor().instrument()
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("httpx_instrumentation_failed", error=type(exc).__name__)

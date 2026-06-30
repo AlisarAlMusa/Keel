@@ -51,6 +51,26 @@ class Settings(BaseSettings):
     # --- MLflow ---
     mlflow_tracking_uri: str = "http://mlflow:5000"
 
+    # --- Email / notifications (G4) ---
+    # keel_email_enabled is the master switch and is ON: Keel-originated actions
+    # (registration/waitlist/petition/graduation/major-change/escalation) produce a
+    # notification email. SIS-domain events (registrar approve/reject) are NOT Keel
+    # actions and never email — they are gated out in the worker.
+    keel_email_enabled: bool = True
+    # Demo simulation: we have no real per-student mailboxes, so every Keel email is
+    # addressed to this one inbox. Set empty to fall back to the payload's address.
+    keel_email_simulate_to: str = "mousaelisar@gmail.com"
+    # Real delivery is still opt-in. With keel_smtp_enabled=false (default) the
+    # worker SIMULATES the send (logs it, to the address above) — no real mail goes
+    # out. Set keel_smtp_enabled=true + host to actually send via SMTP.
+    keel_smtp_enabled: bool = False
+    keel_smtp_host: str = ""
+    keel_smtp_port: int = 587
+    keel_smtp_user: str = ""
+    keel_smtp_password: str = ""
+    keel_smtp_starttls: bool = True
+    keel_email_from: str = "noreply@keel.local"
+
     # --- Tracing ---
     otel_exporter_otlp_endpoint: str = ""
     otel_service_name: str = "keel-api"
@@ -88,12 +108,14 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 1800  # 30-min sliding TTL for Redis chat memory
 
     # --- Platform operator (Phase 5 addendum) ---
+    # Demo passwords — intentionally trivial ("123") for an easy live demo login.
+    # All three are Vault-overridable, so production never ships this default.
     # Demo password for the platform operator account (Vault-overridable).
-    keel_operator_password: str = "keel-operator-demo"
+    keel_operator_password: str = "123"
     # Demo password for tenant_admin accounts (Vault-overridable).
-    keel_admin_password: str = "keel-admin-demo"
+    keel_admin_password: str = "123"
     # Demo password for portal users (students + registrar; Vault-overridable).
-    keel_portal_password: str = "keel-portal-demo"
+    keel_portal_password: str = "123"
 
     # --- Portal tenant binding ---
     # Set per portal service instance to bind login + SIS reads to one tenant.
