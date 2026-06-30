@@ -59,6 +59,13 @@ def upgrade() -> None:
                     'login and portal/widget bootstrap.';
             END IF;
 
+            -- ALTER FUNCTION ... OWNER TO keel_definer requires the *new owner*
+            -- to hold CREATE on the function's schema. keel_definer only has
+            -- USAGE, so without this the reassignment below fails with
+            -- "permission denied for schema public". keel_app owns the public
+            -- schema (db-init.sh), so it may grant CREATE here.
+            GRANT CREATE ON SCHEMA public TO keel_definer;
+
             -- Reassign only the functions keel_app currently owns. On a clean
             -- build every SECURITY DEFINER function in public is created by the
             -- migrations (i.e. owned by keel_app), so this covers all of them.

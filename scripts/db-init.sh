@@ -46,6 +46,11 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     ALTER DEFAULT PRIVILEGES FOR ROLE keel_app IN SCHEMA public
         GRANT SELECT ON TABLES TO keel_definer;
     GRANT USAGE ON SCHEMA public TO keel_definer;
+    -- CREATE so keel_definer can OWN the SECURITY DEFINER functions migration
+    -- 0011 reassigns to it (ALTER FUNCTION ... OWNER requires the new owner to
+    -- hold CREATE on the schema). Without it, 0011 fails "permission denied
+    -- for schema public" on a fresh bootstrap.
+    GRANT CREATE ON SCHEMA public TO keel_definer;
 
     -- keel_app owns the public schema so migrations it runs create tables it
     -- owns; combined with FORCE ROW LEVEL SECURITY, policies apply to it too.
