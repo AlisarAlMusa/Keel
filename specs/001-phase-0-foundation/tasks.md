@@ -50,7 +50,7 @@ description: "Task list for Phase 0 — Foundation"
 - [X] T008 [P] Implement `src/keel/config.py` (pydantic-settings `Settings`, `extra="forbid"`, typed fields for every env key in `contracts/env-contract.md`; `os.getenv` confined here; no secret defaults)
 - [X] T009 [P] Implement `src/keel/logging.py` (structlog JSON renderer; fields event/level/timestamp/service/request_id/trace_id/tenant_id; helper to bind context; no `print`)
 - [X] T010 [P] Implement `src/keel/domain/exceptions.py` (typed domain exceptions: `NotFoundError`, `PermissionDeniedError`, `ToolFailureError`, `ExternalServiceError`)
-- [X] T011 [P] Implement `src/keel/domain/models.py` — Pydantic v2 `frozen=True` value objects per SPEC.md §1 (Term, DayOfWeek, TimeSlot with `overlaps()`, Course, Section, Prerequisite, Corequisite, TranscriptEntry, Hold, ProgramRequirement, Student) — pure, no framework/IO imports
+- [X] T011 [P] Implement `src/keel/domain/models.py` — Pydantic v2 `frozen=True` value objects per docs/SPEC.md §1 (Term, DayOfWeek, TimeSlot with `overlaps()`, Course, Section, Prerequisite, Corequisite, TranscriptEntry, Hold, ProgramRequirement, Student) — pure, no framework/IO imports
 - [X] T012 Implement `src/keel/infra/orm.py` — SQLAlchemy 2.x DeclarativeBase + ORM classes for all 16 tables per data-model.md (SEPARATE from domain models; this is the metadata Alembic targets)
 - [X] T013 Implement `src/keel/infra/db.py` (async engine from `DATABASE_URL`, async session factory, `set_tenant(session, tenant_id)` issuing `SET LOCAL app.tenant_id`, app connects as non-superuser `keel_app`)
 - [X] T014 [P] Implement `src/keel/infra/vault.py` (hvac client factory + `load_secrets()` that reads required keys from `VAULT_SECRET_PATH`; raises on unreachable/missing — fail-closed loader used by US2)
@@ -145,10 +145,10 @@ description: "Task list for Phase 0 — Foundation"
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [X] T044 [P] Start `DECISIONS.md` with the foundational decisions: (1) two-package / three-image architecture and why api+worker share a package; (2) database-enforced RLS isolation approach; (3) uv-only + frozen installs; (4) ORM-separate-from-domain; (5) deferring LangGraph to Phase 2 (FR-025)
+- [X] T044 [P] Start `docs/DECISIONS.md` with the foundational decisions: (1) two-package / three-image architecture and why api+worker share a package; (2) database-enforced RLS isolation approach; (3) uv-only + frozen installs; (4) ORM-separate-from-domain; (5) deferring LangGraph to Phase 2 (FR-025)
 - [X] T045 [P] Verify layered dependency direction holds in the delivered scaffold (no upward imports; `domain/` free of framework/IO imports) — SC-008
 - [X] T046 Run `quickstart.md` end-to-end from a fresh state (up → migrate → seed → verify → fail-closed check → teardown) and fix any drift
-- [X] T047 [P] Update `PLAN.md` Phase 0 checkboxes to reflect delivered items
+- [X] T047 [P] Update `docs/history/PLAN.md` Phase 0 checkboxes to reflect delivered items
 
 ---
 

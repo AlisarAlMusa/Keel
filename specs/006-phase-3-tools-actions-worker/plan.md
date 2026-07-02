@@ -188,7 +188,7 @@ Add each CI gate the moment the thing it tests exists.
 
 ---
 
-## 3. Decisions (log into DECISIONS.md)
+## 3. Decisions (log into docs/DECISIONS.md)
 
 - **Resumable agent (interrupt/resume), not stage-and-exit.** Handles multi-step requests where the write isn't terminal; justifies the Postgres checkpointer. Safety carried by the resume edge.
 - **Frozen approved payload keyed by `action_id`.** The write ignores post-resume LLM args — closes the payload-swap injection risk.

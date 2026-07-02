@@ -96,7 +96,7 @@ accuracy, latency, cost), artifacts (`model_a.joblib`, `label_map.json`, `router
 - The grouped split is deterministic and pinned in `intent-split.json`.
 - Pin package versions in the notebook setup cell.
 
-## 6. Log these to `DECISIONS.md`
+## 6. Log these to `docs/DECISIONS.md`
 
 - TF-IDF+LR vs DistilBERT vs Gemini (the ML/DL/LLM three-way) and why text justifies it.
 - 13 → 15 labels (`my_info`, `chitchat` added) and why.

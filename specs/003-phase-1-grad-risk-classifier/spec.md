@@ -1,7 +1,7 @@
 # SPEC — Graduation-Risk Model (Keel · D1)
 
 > **Rule:** This file is the source of truth. Code, the generator, the notebook, the
-> engine, and the CI gate must match it. Any change here needs a `DECISIONS.md` entry.
+> engine, and the CI gate must match it. Any change here needs a `docs/DECISIONS.md` entry.
 
 ---
 
@@ -25,7 +25,7 @@ Workload (D2) stays deterministic. GPA (D3) stays an LLM baseline. No third trai
   code after prediction, not returned by the model itself). The LLM writes the mitigation
   from that list. The LLM never recomputes the score.
 
-## 3. Changes from the capstone brief (log both in `DECISIONS.md`)
+## 3. Changes from the capstone brief (log both in `docs/DECISIONS.md`)
 
 | Brief said | We do | Why |
 |---|---|---|
@@ -108,14 +108,14 @@ def to_vector(features: dict[str, float]) -> "np.ndarray": ...   # values in FEA
 Labels are generated, not real. Honesty rules:
 
 1. A documented **risk function** turns the 9 features into a risk number (logit).
-   The exact weights live in `plan.md` and are copied into `DATA.md`.
+   The exact weights live in `plan.md` and are copied into `docs/DATA.md`.
 2. The risk function **must include a nonlinear interaction** (weak student × heavy load),
    so the data is not a straight line. Without it, LR wins by default and the comparison
    means nothing.
 3. `p = sigmoid(logit)`, then `at_risk = Bernoulli(p)`. **Sample it — do not threshold.**
    This sampling is the noise. It keeps the best possible F1 below 1.0.
 4. Tune the intercept so the at-risk rate is **23–27%**.
-5. `DATA.md` says clearly: the model learns the generator's idea of risk, not real-world
+5. `docs/DATA.md` says clearly: the model learns the generator's idea of risk, not real-world
    risk. FERPA is why we do not use real transcripts.
 
 ## 6. Data
@@ -133,7 +133,7 @@ Labels are generated, not real. Honesty rules:
 |---|---|---|---|
 | `grad_risk_test.csv` | the 20% test split (written by the notebook) | metric gate | **Yes** |
 | `grad_risk_golden_edge.csv` | ~24 | hand-made obvious cases (clear at-risk / clear on-track) | **Yes** (all must be right) |
-| `hand_labeled_slice.csv` | ~20 | you label these yourself; compare to generator labels in `DATA.md` | No |
+| `hand_labeled_slice.csv` | ~20 | you label these yourself; compare to generator labels in `docs/DATA.md` | No |
 
 ## 8. Evaluation + CI gate
 

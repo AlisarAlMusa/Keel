@@ -1,6 +1,12 @@
-# PLAN.md — Keel Build Roadmap
+# PLAN.md — Keel Build Roadmap (historical)
 
-The ordered build plan with acceptance criteria. Check items off as they land. `SCHEDULE.md` maps these to days; this is the *what* and *done-when*. Always read the current step's acceptance criteria before implementing.
+> **Archived.** This is the original phase-by-phase build roadmap, kept for historical
+> context. The build is complete (through Phase 5 + addendum + remediation + demo-polish);
+> the checkboxes below reflect the roadmap as originally drafted, **not** current status —
+> for what shipped, see [`../DESIGN.md`](../DESIGN.md) and the per-phase `specs/`. Some
+> references (e.g. `SCHEDULE.md`, `PLANNER.md`) predate the current `docs/` layout.
+
+The ordered build plan with acceptance criteria, as originally written.
 
 **Legend:** `[ ]` todo · `[~]` in progress · `[x]` done · 🔴 critical path · ⚙ add CI gate when done
 

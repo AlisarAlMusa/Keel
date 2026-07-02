@@ -1,7 +1,7 @@
 # PLAN — How to build the Graduation-Risk Model
 
 > Follows `spec.md`. If they ever disagree, **`spec.md` wins** — fix this file.
-> Build in the order in §10. Log every real choice to `DECISIONS.md` as you go.
+> Build in the order in §10. Log every real choice to `docs/DECISIONS.md` as you go.
 
 ---
 
@@ -102,7 +102,7 @@ plan_courses      = pick courses from the REAL seed catalog (read credits+diffic
 Build `RawFeatureInputs`, then call the shared `compute_features`. Do not compute features
 by hand here.
 
-### 3.2 Risk function (copy weights into `DATA.md`)
+### 3.2 Risk function (copy weights into `docs/DATA.md`)
 
 Standardize the 9 features (population mean/std), then:
 
@@ -235,7 +235,7 @@ intent-classifier gate.
 - Pin package versions.
 - The notebook must rerun top-to-bottom to the same numbers.
 
-## 9. Log these to `DECISIONS.md`
+## 9. Log these to `docs/DECISIONS.md`
 
 - LR/RF/HistGB instead of ML/DL/LLM (and why).
 - Representative imbalance + `class_weight='balanced'` instead of SMOTE or 50/50 generation. Reason: at 25% minority rate, class weighting is sufficient; avoids the `imbalanced-learn` dependency and any risk of SMOTE leakage. `imbalanced-learn` is not installed anywhere in the project.

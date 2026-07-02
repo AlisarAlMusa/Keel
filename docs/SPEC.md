@@ -1,6 +1,6 @@
 # SPEC.md — Keel Component Contracts
 
-The contracts every component is built against. **Write or extend the relevant section before implementing a component; write tests against its Acceptance criteria.** This is the SpecKit input. Schemas are expressed in Pydantic-v2 style; translate directly. `CLAUDE.md` = rules, `ARCH.md` = shape, this = contracts.
+The contracts every component is built against. **Write or extend the relevant section before implementing a component; write tests against its Acceptance criteria.** This is the SpecKit input. Schemas are expressed in Pydantic-v2 style; translate directly. `CLAUDE.md` = rules, `ARCHITECTURE.md` = shape, this = contracts.
 
 ---
 
@@ -257,26 +257,25 @@ def greedy_plan(student: Student, audit: AuditResult, dag: PrereqDAG,
 
 ## 4. Prediction & model-server
 
-Separate service, `onnxruntime`/`joblib` only. Refuses to boot if artifact SHA-256 ≠ model card.
+Separate lean service, **`joblib` + sklearn only** (torch-free and onnx-free — the grad-risk
+model ships as `joblib`; see DECISIONS D-P2-003). Refuses to boot if the loaded artifact's
+SHA-256 ≠ the model card.
 
 ```python
-# POST /predict/intent
+# POST /predict/intent  →  the trained router (15 labels, not 5)
 class IntentRequest(BaseModel):
     text: str
     tenant_id: UUID
-class Intent(StrEnum):
-    REGISTER="register"; PLAN="plan"; ADVISE="advise"; PREDICT="predict"; OTHER="other"
 class IntentResponse(BaseModel):
-    intent: Intent
-    confidence: float          # 0..1; router uses a threshold
+    intent: str                # one of 15 labels — see DATA.md §1 for the full set
+    confidence: float          # 0..1; the router thresholds this (D-P2-001)
 
-# POST /predict/grad-risk
+# POST /predict/grad-risk  →  9 engine-computed numeric features
 class GradRiskRequest(BaseModel):
-    gpa: Decimal
-    failed_count: int
-    progress_rate: Decimal
-    current_load_credits: int
-    planned_workload_raw: int
+    cumulative_gpa: Decimal; gpa_trend: Decimal
+    num_failures: int; num_repeats: int
+    progress_rate: Decimal; pct_complete: Decimal
+    planned_credits: int; planned_workload_index: int; num_hard_courses: int
 class RiskLevel(StrEnum):
     ON_TRACK="on_track"; AT_RISK="at_risk"
 class GradRiskResponse(BaseModel):
@@ -284,8 +283,11 @@ class GradRiskResponse(BaseModel):
     probability: float         # P(at_risk)
     reasons: list[str]         # top feature contributions, fed to LLM mitigation
 ```
-**Rules:** two trained models only. Workload comes from the engine (not here). GPA estimate is an LLM call in `services/`, always caveated, never a model.
-**Acceptance:** `/healthz` fails if SHA mismatch; latency budget documented; both models logged in MLflow with a promoted "production" version the server loads.
+**Rules:** two trained models only (intent classifier + graduation-risk). Workload comes
+from the engine (not here). GPA estimate is an LLM call in `services/`, always caveated, never
+a model. The 15 intent labels and the 9 grad-risk features are documented in [`DATA.md`](DATA.md).
+**Acceptance:** `/healthz` fails on SHA mismatch; both models are logged in MLflow with a
+promoted "production" version the server loads at boot.
 
 ---
 
@@ -309,7 +311,10 @@ def retrieve(tenant_id: UUID, query: str, k: int = 8) -> list[RetrievedChunk]: .
 def route(text: str, tenant_id: UUID, intent_threshold: float) -> Route:
     # Route = WORKFLOW(intent) for easy/enumerable, AGENT for hard/ambiguous/multi-step
 ```
-**Rules:** uses the trained intent model. Low-confidence or multi-intent → AGENT. **Never replace the trained router with an LLM** — its purpose is to keep the LLM off cheap decisions.
+**Rules:** uses the trained intent model (15 labels — [`DATA.md`](DATA.md) §1). A confident
+prediction routes straight to the one handler mapped to that label; low-confidence or
+multi-intent → AGENT (D-P2-001). **Never replace the trained router with an LLM** — its
+purpose is to keep the LLM off cheap decisions.
 **Acceptance:** clear single-intent messages route to WORKFLOW; ambiguous/compound messages route to AGENT.
 
 ---
@@ -329,7 +334,7 @@ search_sections(course_codes, term, prefs) -> list[SectionPlan]
 # min_start_hour)` — a READ tool that lists the OPEN sections per course (day/time,
 # instructor, seats) and which meet the prefs; the agent reasons over them and passes the
 # same prefs to stage_enrollment, where the engine picks matching open, conflict-free
-# sections. See DECISIONS D-P6-003 and specs/008…/registration-section-flow.md.
+# sections. See DECISIONS D-P6-002 and specs/008-phase-5-frontend-widget-auth/spec.md §11.
 rag_search(query) -> Answer(text, sources)
 save_plan(plan_id|draft) -> Plan                      # Plan-entity write, NOT a registration write
 swap_course(plan_id, drop_code, add_code) -> Plan|list[Violation]
@@ -454,19 +459,28 @@ class GuardResult(BaseModel):
 
 ## 12. Selected API surface (`api/`)
 
+> **As-built** (see [`DESIGN.md`](DESIGN.md) §3/§4/§6). The token is minted server-to-server
+> by the portal, and approval is a state machine on the `actions` row (no separate
+> `ApprovalToken` object / `/actions/execute` endpoint). The shape below is the real surface.
+
 ```
-POST /widget/token            # widget_id (+origin) -> signed token
-POST /chat                    # {message} (auth: widget token)  -> assistant turn (guardrailed, traced)
-POST /plans                   # save plan        GET /plans  GET /plans/{id}  POST /plans/{id}/activate
-POST /actions/approve         # issue ApprovalToken for a pending action
-POST /actions/execute         # execute_action(req, token) -> ActionReceipt
-# admin (auth: admin JWT)
-POST /admin/catalog           # upload -> populates DB tables + RAG corpus
-PUT  /admin/rules             # credit caps, holds, windows
-GET  /admin/requests          # institutional-request queue
-POST /admin/requests/{id}/resolve   # approve/reject -> outbox notifies student
-GET  /admin/cost              # per-tenant LLM/embedding cost
+# widget (auth: widget JWT)
+POST /internal/mint-token           # portal service secret -> short-lived widget JWT (server-to-server)
+POST /chat                          # {message} -> assistant turn (guardrailed, traced); may return action_id + pending_approval
+POST /actions/{id}/approve          # THE gate: verified widget JWT -> resume graph -> execute_node writes
+POST /actions/{id}/reject           # cancel a pending action
+# plans
+POST /plans  ·  GET /plans  ·  GET /plans/{id}  ·  POST /plans/{id}/activate
+# admin / operator (auth: role JWT from POST /auth/login)
+POST /admin/rag                     # upload catalog.md / policy.md -> RAG corpus (prose only)
+GET/PUT /admin/widget-config        # persona, allowed_origins, enabled_tools
+GET  /admin/cost                    # per-tenant LLM/embedding cost   ·   GET /admin/audit
+POST /platform/tenants              # provision   ·   .../suspend · .../unsuspend · .../erase
+GET  /platform/cost  ·  GET /platform/audit        # aggregate-only, no tenant content
 ```
+
+The registrar works the institutional-request queue in the **mock SIS portal**, not a Keel
+`/admin` route — those requests read as plain SIS data (DECISIONS D-P5-000).
 **Rules:** routers are thin (parse, authorize, delegate, serialize); no business logic. Every route tenant-scoped via the auth dependency.
 
 ---
@@ -505,7 +519,7 @@ Full contracts for Phase 4 components (C1–C4, E1–E2, F1–F4) are specified 
 
 - **C1–C4, E1, E2-chat**: read-only; no writes; LLM narrates engine numbers.
 - **E2-save** (`save_career_roadmap`): routes through `propose→verify→repair` loop;
-  only a verifier-valid plan is persisted (see `PLANNER.md`).
+  only a verifier-valid plan is persisted (see `ENGINE.md`).
 - **F1–F4**: shared action pattern in `services/actions/institutional.py`;
   `approved=False` always (proposal only from the agent); actual writes gate on
   explicit student approval (Day 6).

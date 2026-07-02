@@ -72,7 +72,7 @@ model artifacts can be promoted/verified independently.
 - **Standards:** all knobs in `Settings` (`extra="forbid"`); Cohere/embed/pgvector
   clients are lifespan singletons via `Depends()`; `rag_search` returns a
   structured `ToolError`; `structlog` + spans.
-- **Decisions to record in DECISIONS.md:** chunk rule + the defended numbers,
+- **Decisions to record in docs/DECISIONS.md:** chunk rule + the defended numbers,
   embed model + dim, RRF k=60, dense/sparse/rerank k's, why no parent-child.
   **Test on 5 hand-written queries** before wiring into the agent.
 
@@ -146,8 +146,8 @@ model artifacts can be promoted/verified independently.
 | Intent preproc | bundled in joblib artifact (text-in) | server owns NLP preprocessing |
 | grad-risk input | 9-vector from backend (no features in server) | one extra backend step; keeps no-second-copy |
 | Model-server down | route to agent | costlier turn, but safe |
-| Guardrails | in-process for MVP | NeMo sidecar deferred → `STRETCH.md` |
-| Admin doc upload scope | policies only now; catalog editing → `STRETCH.md` | policy is pure RAG (safe); catalog edits ripple through the engine (DB rows, DAG, audit, eligibility, saved-plan validation, replanning, caches) |
+| Guardrails | in-process for MVP | NeMo sidecar deferred → `docs/STRETCH.md` |
+| Admin doc upload scope | policies only now; catalog editing → `docs/STRETCH.md` | policy is pure RAG (safe); catalog edits ripple through the engine (DB rows, DAG, audit, eligibility, saved-plan validation, replanning, caches) |
 | Agent caps | 6 iters / 3 repairs / 30-min TTL | bounds cost + latency |
 | propose_plan | feasibility-only this phase | risk + ranking land in Phase 3 |
 | Graph checkpointer | Postgres `AsyncPostgresSaver` from the start | durable across restart + long HIL pause; not Redis-then-switch |

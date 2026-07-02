@@ -64,7 +64,7 @@ exists. Goal: one message → router → agent → a verifier-valid plan.
       singletons via `Depends()`; all knobs in `Settings` (`extra="forbid"`).
 - [ ] Grounding: prereq/eligibility facts from the engine, not prose.
 - [ ] Test on **5 hand-written queries**; record chunk rule + numbers (k's, RRF
-      60, embed dim) in DECISIONS.md.
+      60, embed dim) in docs/DECISIONS.md.
 - **Done when:** 5 queries return correct chunks; cross-tenant query returns
       nothing.
 
@@ -154,8 +154,8 @@ The tenant filter, the redaction-at-every-egress, the bounded agent, and the
 three CI gates. The router/agent niceties can be trimmed; these are the floor.
 
 ## Claude Code notes
-- Record deferred ideas in `STRETCH.md`: the NeMo guardrails sidecar and admin
+- Record deferred ideas in `docs/STRETCH.md`: the NeMo guardrails sidecar and admin
   catalog editing. In-process guardrails + admin **policy** upload ship now.
-- Log the router design in `DECISIONS.md`: argmax = route, max_prob = trust gate,
+- Log the router design in `docs/DECISIONS.md`: argmax = route, max_prob = trust gate,
   agent = fallback; `FALLBACK_THRESHOLD ≈ 0.512` in `router_config.json`
   (≥90% accuracy on covered); keep 15 labels for routing + analytics + priming.

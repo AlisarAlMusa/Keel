@@ -65,10 +65,10 @@ Actionable checklist, dependency-ordered: schema → contracts → engine-backed
 
 ## Block 5 — Docs (parallel, end of day)
 
-- [ ] **DECISIONS.md** — log D1–D8 from `plan.md` (read-only advising, single student gate, advisors-table-no-role, F3 hard block, idempotency reuse, F4 email-only, E2 saved only through the verifier loop).
-- [ ] **SECURITY.md** — extend write-action-safety section to the four institutional writes; note F3-never-enrolls.
-- [ ] **PLANNER.md** — note that C3's recovery plan reuses the `propose_plan` generate→verify→repair loop (failure baked into the audit) and A2's path re-enters the verifier — no special-case planner code for either.
-- [ ] **SPEC.md** — fold today's contracts in (or link this `spec.md`).
+- [ ] **docs/DECISIONS.md** — log D1–D8 from `plan.md` (read-only advising, single student gate, advisors-table-no-role, F3 hard block, idempotency reuse, F4 email-only, E2 saved only through the verifier loop).
+- [ ] **docs/SECURITY.md** — extend write-action-safety section to the four institutional writes; note F3-never-enrolls.
+- [ ] **docs/ENGINE.md** — note that C3's recovery plan reuses the `propose_plan` generate→verify→repair loop (failure baked into the audit) and A2's path re-enters the verifier — no special-case planner code for either.
+- [ ] **docs/SPEC.md** — fold today's contracts in (or link this `spec.md`).
 
 ---
 

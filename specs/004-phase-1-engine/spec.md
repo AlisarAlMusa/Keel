@@ -112,7 +112,7 @@ repairs; `"invalid plan"` does not.
 
 `HOLD_BLOCK` is **not** here — it is a Day-4 write-time gate.
 
-> **DECISIONS.md:** `REPEAT_PASSED` is hardcoded — a passed course cannot be re-planned. Grade-improvement repeats are a real institutional policy but add verifier complexity (tenant config threading) with no MVP value. Revisit if a real tenant requires it.
+> **docs/DECISIONS.md:** `REPEAT_PASSED` is hardcoded — a passed course cannot be re-planned. Grade-improvement repeats are a real institutional policy but add verifier complexity (tenant config threading) with no MVP value. Revisit if a real tenant requires it.
 
 Empty violation list = valid.
 

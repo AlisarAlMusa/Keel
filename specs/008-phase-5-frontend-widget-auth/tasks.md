@@ -62,7 +62,7 @@ Tags: **[CRIT]** critical path · **[CI]** gate · **[REAL]** functional · **[S
 - [ ] Reuse outbox publisher + email-on-seat-open (retry/backoff).
 
 ## H. Adapter (document only)
-- [ ] `SISGateway` interface + `sis_integration` config captured in `production.md`.
+- [ ] `SISGateway` interface + `sis_integration` config captured in `docs/PRODUCTION.md`.
 - [ ] **[THIN]** Grep raw cross-domain queries; note (don't change) for post-demo.
 
 ## I. CI gates (add as each exists)
@@ -76,3 +76,42 @@ Tags: **[CRIT]** critical path · **[CI]** gate · **[REAL]** functional · **[S
 ### Cut order if behind
 1. Registrar Students/Rules → 2. Cost dashboard UI → 3. Auto-replan → 4. student stage-set pages.
 **Never cut:** auth boundary · approval gate · My Schedule write-proof · registrar request queue · guardrails.
+
+---
+
+## Addendum tasks — operator, auth, second portal
+
+> Merged from the former `missing_recovery.md` TASKS section. All implemented (Phase 5 addendum,
+> 2026-06). Contracts: spec.md §10; rationale: DECISIONS D-A-001…005, D-R-008/011/015.
+
+**Migrations**
+- [x] **[CRIT]** `tenants.status`, nullable `users.tenant_id` + `'platform_operator'` role, check constraints, `platform_audit`, `platform_usage_summary`.
+- [x] **[CRIT]** `keel_definer` (`NOLOGIN BYPASSRLS`) role bootstrapped in `scripts/db-init.sh`; migration 0011 reassigns the genuinely cross-tenant SECURITY DEFINER functions to it (D-R-008).
+- [x] **[SEC]** Portal lookups RLS-scoped, not BYPASSRLS; migration 0012 drops the portal DEFINER functions (D-R-015).
+- [x] **[CRIT]** `portal_user` table (portal-domain, RLS by `tenant_id`, unique email, FK→student).
+
+**Auth + operator + portal**
+- [x] **[CRIT]** Role-stamped token issue (operator token has no `tenant_id`); `require_role("platform_operator")`; `assert_tenant_active` on mint / `/chat` / admin login.
+- [x] **[CRIT][REAL]** `/platform/tenants` list/provision/suspend/unsuspend/erase + `/platform/cost` (aggregate fn only) + `/platform/audit`.
+- [x] **[CRIT][REAL]** `erase_tenant` RQ job (cascade by `tenant_id`, idempotent, audit counts).
+- [x] **[CRIT][REAL]** `POST /portal/login {email,password}` (bcrypt, tenant-bound, generic 401); registrar login via same endpoint.
+- [x] **[CRIT]** Second portal — one image, two compose services; each tenant's `allowed_origins` includes its portal origin.
+- [x] **[CRIT]** Platform Console UI (login, tenants, cost, audit), role-gated.
+- [x] **[SEED]** `seed.py` idempotent: 1 operator + 1 admin/tenant; 3 students + 1 registrar/tenant.
+
+**CI gates**
+- [x] **[CI]** Operator token → tenant-content routes rejected; cannot mint a widget token.
+- [x] **[CI]** Suspend → mint/`/chat`/admin-login 403 while `/portal/login` + `/portal/schedule` stay 200; unsuspend restores.
+- [x] **[CI]** Northane widget token cannot read Summit rows (pooled connection); wrong-tenant origin at mint → 403.
+
+## Section-selection flow tasks
+
+> Merged from the former `registration-section-flow.md`. Contract: spec.md §11; rationale:
+> DECISIONS D-P6-001/002. Covered by `tests/unit/test_section_selection.py`.
+
+- [x] **T1** `_after_stage` conditional edge routes a failed stage back to the LLM.
+- [x] **T2** Migration `0013_section_instructor` + seed: 2 sections/course/offered-term, synthetic instructors, varied/full times; docs/DATA.md §1b honesty note.
+- [x] **T3** `propose_sections` read tool (open-section pool + instructor/seats + pref fit; full vs not-offered) + section cards via the plan channel; system-prompt tool-error rule.
+- [x] **T4** `stage_enrollment` preference-aware section resolution; `propose_plan` flags no-section courses.
+- [x] **T5** Tests (pref ranking, conflict avoidance, unresolved, `_after_stage`) + write-safety/agent-node suites green.
+- [ ] **Deferred** formatting-helper extraction from `propose_plan`; a richer structured `SectionCard` widget component (STRETCH).
