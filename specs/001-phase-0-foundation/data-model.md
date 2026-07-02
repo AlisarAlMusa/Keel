@@ -1,6 +1,6 @@
 # Data Model: Phase 0 — Foundation
 
-The baseline schema delivered by `migrations/versions/0001_baseline.py`. Sixteen tables. **Row-Level Security is enabled and forced on every tenant-owned table.** Domain value objects (`domain/models.py`, Pydantic v2, per `SPEC.md` §1) are the in-code vocabulary; the ORM models (`infra/orm.py`) map to these tables; repositories translate between them.
+The baseline schema delivered by `migrations/versions/0001_baseline.py`. Sixteen tables. **Row-Level Security is enabled and forced on every tenant-owned table.** Domain value objects (`domain/models.py`, Pydantic v2, per `docs/SPEC.md` §1) are the in-code vocabulary; the ORM models (`infra/orm.py`) map to these tables; repositories translate between them.
 
 ## Conventions
 

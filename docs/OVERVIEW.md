@@ -437,7 +437,7 @@ A public GitHub repository that comes up with a single `docker compose up` from 
 - `SPEC.md`
 - `DESIGN.md`
 - `DECISIONS.md`
-- `PLANNER.md` — the engine + verifier + outbox contract
+- `ENGINE.md` — the engine + verifier + outbox contract
 - `PRODUCTION.md` — the SIS boundary and the SISGateway/adapter contract to be built for production
 - `DATA.md` — the synthetic-data honesty note
 - `EVALS.md`

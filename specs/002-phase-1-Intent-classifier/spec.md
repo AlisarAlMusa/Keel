@@ -1,7 +1,7 @@
 # SPEC — Intent Classifier & Router (Keel · the front door)
 
 > **Rule:** This file is the source of truth. The generator, the notebook, the router, and the
-> CI gate must match it. Any change here needs a `DECISIONS.md` entry.
+> CI gate must match it. Any change here needs a `docs/DECISIONS.md` entry.
 >
 > **Status:** This document is written *after* the model was built — it documents what shipped.
 > It is the intent-classifier counterpart to `specs/003-phase-1-grad-risk-classifier/spec.md`.
@@ -42,7 +42,7 @@ The router's three-branch logic (documented, not part of the model):
 3. Else (low confidence, ambiguous, or multi-intent) → hand to the bounded LLM agent, which
    picks among the same handlers as tools.
 
-## 3. Changes from the capstone brief (log in `DECISIONS.md`)
+## 3. Changes from the capstone brief (log in `docs/DECISIONS.md`)
 
 | Brief said | We do | Why |
 |---|---|---|

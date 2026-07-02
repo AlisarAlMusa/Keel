@@ -29,7 +29,7 @@ Phase 0 technical decisions. Most are dictated by `CLAUDE.md` §6 and the consti
 
 ## R5. ORM models separate from domain models
 
-- **Decision**: SQLAlchemy ORM classes live in `infra/orm.py`. Domain value objects (Pydantic v2 `frozen=True`, per `SPEC.md` §1) live in `domain/models.py`. Repositories map ORM rows → domain objects and never leak ORM rows upward.
+- **Decision**: SQLAlchemy ORM classes live in `infra/orm.py`. Domain value objects (Pydantic v2 `frozen=True`, per `docs/SPEC.md` §1) live in `domain/models.py`. Repositories map ORM rows → domain objects and never leak ORM rows upward.
 - **Rationale**: Engineering rule #9 + constitution layering. Keeps `domain/` import-free of frameworks (the engine must be pure). The DB schema can evolve without changing domain contracts.
 - **Alternatives considered**: SQLModel (couples ORM and Pydantic) — rejected: it blurs the domain/infra boundary the engine depends on.
 

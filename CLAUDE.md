@@ -1,7 +1,7 @@
 # CLAUDE.md — Keel
 
 > Read this fully at the start of every session. It is the contract for how this codebase is built.
-> For deeper detail: ARCH.md (architecture), PLAN.md (what to build next), SPEC.md (component contracts), ENGINEERING_RULES.md (tactical standards / review checklist), constitution.md (principles), DECISIONS.md (why we chose things).
+> For deeper detail (all under `docs/`): OVERVIEW.md (vision), ARCHITECTURE.md + DESIGN.md (shape / as-built), SPEC.md (component contracts), ENGINE.md (engine + plan loop), SECURITY.md, DECISIONS.md (why we chose things). Reference: docs/reference/ENGINEERING_RULES.md (review checklist), `.specify/memory/constitution.md` (principles). Historical build roadmap: docs/history/PLAN.md.
 
 ---
 
@@ -66,7 +66,7 @@ React Admin                         React Student Widget (signed token)
    Vault · MinIO · MLflow · outbox publisher · OTel/LangSmith tracing
 ```
 
-Full version: `ARCH.md`.
+Full version: `docs/ARCHITECTURE.md` (intended shape) and `docs/DESIGN.md` (as-built).
 
 ---
 
@@ -209,13 +209,12 @@ Thresholds live in `tests/eval/eval_thresholds.yaml`. Eval report JSON → MinIO
 
 ## 14. What to do at the start of a task
 
-1. Check `PLAN.md` for the current step and its acceptance criteria.
-2. If it touches the engine or a write action, **read the relevant `SPEC.md` section first** (or ask the human to write it).
+1. For historical context on how a component was built, check `specs/` (per-phase spec/plan/tasks) and `docs/history/PLAN.md` (the original roadmap — the build is complete).
+2. If it touches the engine or a write action, **read the relevant `docs/SPEC.md` section first** (or ask the human to write it).
 3. For engine work, confirm the human's edge-case tests exist before implementing.
 4. Make the change in the correct layer (see §5). Keep the dependency direction.
 5. Add/extend the matching CI gate (§12).
-6. Append any non-obvious decision to `DECISIONS.md`.
-7. Update the checkbox in `PLAN.md`.
+6. Append any non-obvious decision to `docs/DECISIONS.md`.
 
 ## 15. What NOT to do
 

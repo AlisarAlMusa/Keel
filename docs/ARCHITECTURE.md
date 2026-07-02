@@ -1,6 +1,9 @@
-# ARCH.md — Keel Architecture
+# ARCHITECTURE.md — Keel Architecture
 
-This is the architectural reference. `CLAUDE.md` has the rules; this explains the *why* and the *shape*. Read before working on the engine, the agent, the action pattern, or tenancy.
+This is the architectural reference — the *why* and the *shape*. `CLAUDE.md` has the rules;
+[`DESIGN.md`](DESIGN.md) is the **as-built** design of record (where an interface below has
+drifted from what shipped, DESIGN.md and the code win). Read before working on the engine, the
+agent, the action pattern, or tenancy.
 
 ---
 
@@ -141,11 +144,28 @@ Instances: `execute_enrollment`, `waitlist_join/leave`, `apply_graduation`, `req
 
 Tool set: `audit_degree · propose_plan · simulate_whatif · predict_risk · search_sections · save_plan · swap_course · execute_enrollment · apply_graduation · request_major_change · submit_petition · escalate`.
 
+### Why the router earns its place — cheap turns
+
+Most real traffic is a lookup plus a fixed template, costing **~0 LLM tokens** because a
+confident classifier prediction runs one deterministic handler directly, never the agent:
+
+- "Show my saved plans" / "activate my Fast Graduation plan" → Plan CRUD → card
+- "What are the prerequisites of CS301?" → DAG lookup → template
+- "What time is my Data Structures class?" / "show my schedule" → `my_info` DB lookup → template
+- "Am I on track?" → `audit_degree` + `predict_risk` → badge + numbers
+- "Yes" / "approve" / "cancel" → the approval state machine (not even the classifier)
+- "Hi" / "thanks" → `chitchat` (a lite-model reply)
+
+The impressive turns (planning, recovery, petitions) use the agent; the small turns above are
+the majority of traffic. The classifier is **trained model #1 of 2**, justified by traffic,
+not added for show — and `out_of_scope` filters junk before any LLM sees it. A misroute is
+never dangerous: every write still passes the engine check and the approval gate.
+
 ---
 
 ## 9. Prediction & model serving
 
-- **model-server** is a separate service using `onnxruntime`/`joblib` only — no torch in any runtime container. Serves the intent classifier and the graduation-risk model over HTTP.
+- **model-server** is a separate service using **`joblib` + sklearn only** — no torch, no onnxruntime in the runtime container (D-P2-003). Serves the intent classifier and the graduation-risk model over HTTP.
 - Models trained offline (Colab), three-way comparison (classical ML / small DL→ONNX / LLM baseline) logged to **MLflow**.
 - Artifacts pinned by SHA-256 in a model card; the server refuses to boot on mismatch. MLflow registry is the artifact + promotion source of truth (staging→production; rollback = re-point).
 - **Workload** is deterministic (engine). **GPA estimate** is a light LLM baseline, always caveated.
@@ -158,7 +178,7 @@ Tool set: `audit_degree · propose_plan · simulate_whatif · predict_risk · se
 - Repositories **also** filter by tenant (defense in depth).
 - pgvector queries are tenant-filtered.
 - **Roles:** Admin (registrar) — grounds/configures + works the request queue; Student — own identity/transcript only; Platform operator — provision/suspend/erase tenants, never reads tenant data. No separate advisor role (escalation is an email with an LLM handoff summary).
-- **Widget auth:** public widget_id → short-lived signed token; server-side origin allowlist; CORS/CSP as defense-in-depth, never the boundary.
+- **Widget auth:** the portal backend mints a short-lived signed widget JWT server-to-server (`POST /internal/mint-token`, portal service secret) — the browser never asserts identity; server-side origin allowlist; CORS/CSP as defense-in-depth, never the boundary. See [`DESIGN.md`](DESIGN.md) §6.
 - **Guardrails:** in-process input/output rails (injection, cross-tenant, PII redaction), hardcoded, not tenant-configurable. Red-team gate in CI.
 - **Secrets:** Vault at startup; refuse to boot if unreachable.
 

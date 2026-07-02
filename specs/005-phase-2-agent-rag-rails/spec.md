@@ -235,7 +235,7 @@ Rules:
   run together.
 - **No parent-child.** With rerank + a ~30–40-chunk corpus, retrieve-top-k +
   rerank already surfaces both clauses for cross-section questions; parent storage
-  + linking would be machinery with no measurable gain. (Justify in DECISIONS.md.)
+  + linking would be machinery with no measurable gain. (Justify in docs/DECISIONS.md.)
 - *Course sections (CS101-A/B) are DB scheduling rows, not RAG content — the
   corpus has one description per course code.*
 
@@ -269,7 +269,7 @@ Embedding calls are **async (`httpx.AsyncClient`), batched, with timeout +
 
 **Scope decision (trade-off): admin upload is policies-only.** A policy doc is pure
 RAG advisory with **no engine impact**, so live ingest is safe and cheap. **Catalog
-editing is deferred to `STRETCH.md`** — a course catalog is part of the
+editing is deferred to `docs/STRETCH.md`** — a course catalog is part of the
 **deterministic engine**, not just RAG content, so one edit would have to atomically
 touch DB course rows, the prerequisite DAG (+ cycle check), the degree audit,
 planning/registration eligibility, saved-plan validation + automatic replanning, and
@@ -508,7 +508,7 @@ From the standards guide — only the rules that shape this phase:
 
 ## 8. Instructions for Claude Code
 
-> In the **repo-root `PLAN.md`**, under a section `## To add if time` (create the
+> In the **repo-root `docs/history/PLAN.md`**, under a section `## To add if time` (create the
 > section if it does not exist), add: *"NeMo Guardrails sidecar — replace/augment
 > the in-process rails with a topical + injection sidecar (stretch)."* MVP uses
 > the in-process rails in `infra/guardrails.py`.
@@ -516,7 +516,7 @@ From the standards guide — only the rules that shape this phase:
 > Add `GEMINI_LITE_MODEL=gemini-2.0-flash-lite` to `.env.example`. This is the
 > model for `chitchat` + `out_of_scope` flows only — same Gemini API key,
 > separate env var. The main `GEMINI_MODEL=gemini-2.5-flash` stays for all
-> reasoning-heavy flows. Log this model-routing decision in `DECISIONS.md`.
+> reasoning-heavy flows. Log this model-routing decision in `docs/DECISIONS.md`.
 
 > **Keep `.env` and `.env.example` in sync.** Every var added to `.env.example`
 > this phase must also be written to `.env`. New vars: `GEMINI_LITE_MODEL`,
@@ -525,7 +525,7 @@ From the standards guide — only the rules that shape this phase:
 > `SPARSE_K=20`, `RRF_K=60`, `RERANK_TOP_N=5`, `SESSION_TTL_SECONDS=1800`. Treat
 > `COHERE_API_KEY` as a secret (Vault in compose, like the other secrets).
 
-> Log in `DECISIONS.md`: router uses argmax = route when conf ≥
+> Log in `docs/DECISIONS.md`: router uses argmax = route when conf ≥
 > `FALLBACK_THRESHOLD` (≈0.512, in `router_config.json`); below threshold the
 > **agent decides the intent and handles the turn** (multi-step/ambiguous land
 > here by low confidence — the agent is the single fallback). All 15 labels

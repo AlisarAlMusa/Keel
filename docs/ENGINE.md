@@ -1,7 +1,7 @@
-# PLANNER.md — Plan Generation Architecture
+# ENGINE.md — Plan Generation Architecture
 
 How Keel generates, validates, and persists course plans. Read alongside
-`ARCH.md` (overall system) and `SPEC.md` (tool contracts).
+`ARCHITECTURE.md` (overall system) and `SPEC.md` (tool contracts).
 
 ---
 

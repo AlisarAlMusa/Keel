@@ -95,47 +95,29 @@ or process listings.
 awkward to evolve; `TEXT` + `CHECK` is trivially migratable and equally safe at
 the DB boundary while the domain keeps real `StrEnum`s.
 
-### D-007 — MLflow backed by SQLite + local volume in Phase 0
+### D-007 — MLflow backed by Postgres + MinIO, artifacts proxy-served
 
-**Decision.** The Phase 0 MLflow service uses a SQLite backend store and a local
-artifact volume, not Postgres + MinIO.
+**Decision.** MLflow runs with **Postgres as the backend store** (metadata + model
+registry) and **MinIO as the artifact store**, started with `--serve-artifacts` so
+artifact uploads proxy through the tracking server's HTTP API rather than clients
+writing directly to S3. Custom `Dockerfile.mlflow` adds `psycopg2-binary` + `boto3`;
+`minio-init` creates the `keel-artifacts` and `keel-mlflow` buckets; `db-init.sh`
+creates a separate `mlflow` database via `\gexec`. This is the "Backed by MinIO +
+Postgres" state in `ARCHITECTURE.md §6`.
 
-**Rationale.** Phase 0's acceptance is only "MLflow server up, UI reachable." A
-self-contained SQLite/volume config is the most reliable way to keep the smoke
-test green without adding `psycopg2`/`boto3` into the third-party MLflow image.
-When model logging/promotion lands (Phase 1), MLflow moves to the Postgres
-backend + MinIO artifact store described in `ARCH.md`.
+**Rationale.** Training runs from Colab (remote) — a notebook cannot reach a
+Docker-internal volume or `http://minio:9000`. With `--serve-artifacts`, Colab only
+needs the tracking server (tunneled via ngrok/cloudflared to `localhost:5001`) and
+uploads artifacts over HTTP; no S3 credentials in Colab. The registry and all run
+artifacts survive container restarts (both are durable volumes).
 
-**Rejected (for now).** Postgres + MinIO-backed MLflow — deferred to the phase
-that actually logs runs, to avoid image-dependency fragility in the foundation.
+**Phase-0 note.** The foundation phase (before any run was logged) started on a
+self-contained SQLite backend + local volume purely to keep the smoke test green
+without adding `psycopg2`/`boto3` to the third-party image; it was upgraded to the
+above the moment model training landed. The SQLite config never shipped a real run.
 
-### D-007b — MLflow upgraded to Postgres + MinIO in Phase 1; artifacts proxy-served
-
-**Decision.** At Phase 1 (when model training begins), MLflow is upgraded from
-the Phase 0 SQLite/volume config to: Postgres as the backend store (metadata +
-model registry) and MinIO as the artifact store. MLflow is started with
-`--serve-artifacts`, which proxies artifact uploads through the tracking server's
-HTTP API rather than requiring clients to write directly to S3.
-
-**Rationale.** Training runs from Colab (remote) — a Colab notebook cannot reach a
-Docker-internal volume or `http://minio:9000`. With `--serve-artifacts`, Colab
-only needs to reach the tracking server (tunneled via ngrok/cloudflared to
-`localhost:5001`); it uploads artifacts over HTTP to MLflow, which forwards them
-to MinIO. No S3 credentials needed in Colab. This also means the model registry
-and all run artifacts survive container restarts (Postgres + MinIO are both
-durable volumes).
-
-**Implementation.** Custom `Dockerfile.mlflow` adds `psycopg2-binary` + `boto3`
-to the slim base image. `minio-init` one-shot container creates both
-`keel-artifacts` and `keel-mlflow` buckets on first boot. `db-init.sh` creates
-a separate `mlflow` database in Postgres via `\gexec` (idempotent, works outside
-a transaction). This is the "Backed by MinIO + Postgres" state described in
-`ARCH.md §6`.
-
-**Rejected.** Direct S3 client in Colab — requires exposing MinIO credentials
-and MinIO port to the tunnel, adds credential management in Colab. SQLite/volume
-retained beyond Phase 0 — remote clients cannot write to a local volume; only
-works if training is always local.
+**Rejected.** Direct S3 client in Colab — requires exposing MinIO credentials/port to
+the tunnel. Keeping SQLite/volume — remote clients cannot write to a local volume.
 
 ### D-008 — LangGraph/LangChain not installed in Phase 0
 
@@ -498,13 +480,16 @@ everywhere. Reduces attack surface and keeps correctness guarantees uniform.
 
 ### D-P4-004 — One approval gate (student); registrar decision is downstream
 
-**Decision.** The agent's institutional tools call service functions with
-`approved=False`. The True path is reached only by explicit student action (approval
-UI / endpoint, Day 6). Registrar review is a manual downstream step.
+**Decision.** The agent automates the *request*, not the *decision*: an institutional tool
+only ever **stages** a pending action; the actual filing happens after explicit student
+approval, and registrar review is a further downstream step. **As-built**, "explicit student
+approval" is the staged-action state machine (`POST /actions/{id}/approve`), realized in
+D-R-003 — no institutional tool carries an `approved` field, so neither the agent nor an
+injection can self-file. (A brief regression once had the petition tool filing with
+`approved=True`; D-R-003 closed it.)
 
-**Why.** The agent automates the *request*, not the *decision*. This matches how
-real registration offices work: filing is the agent's value; approval authority
-stays with the human registrar.
+**Why.** Filing is the agent's value; approval authority stays with the human — matching how
+real registration offices work.
 
 ### D-P4-005 — New advisors lookup table; no advisor role
 
@@ -774,7 +759,14 @@ Secure` and a more complex setup for cross-origin cookie use.
 
 ### D-A-003 — Portal login is real email + password, portal-domain only
 
-**Decision.** `POST /portal/login` now accepts `{ email, password }`. The portal server calls `portal_find_by_email()` (SECURITY DEFINER, bypasses RLS for the pre-session lookup), verifies bcrypt, asserts the account's tenant_id matches `PORTAL_TENANT` (the instance env var), and sets the session cookie. Keel's `users` table is untouched — this is portal-domain auth only.
+**Decision.** `POST /portal/login` accepts `{ email, password }`. A portal instance knows its
+own tenant (`PORTAL_TENANT`), so it resolves that tenant and looks up `portal_user` by email
+under **RLS** inside `withTenantTx`, verifies bcrypt, and sets the session cookie — a foreign
+email simply returns zero rows → generic 401. Keel's `users` table is untouched (portal-domain
+auth only). *(The pre-session lookup was originally a `portal_find_by_email()` SECURITY DEFINER
+function that bypassed RLS; that turned out to be unnecessary — the portal always knew its
+tenant — so it was replaced with the RLS-scoped query above and the function was dropped in
+migration 0012. See D-R-015 for the final mechanism.)*
 
 **No suspend check at `/portal/login`.** Suspension darkens Keel (the AI layer), not the university's SIS. Students still log into the portal and see My Schedule even when Keel is suspended. The suspend gate fires at `/portal/keel-token` (widget token mint) and `/chat`.
 
@@ -799,11 +791,11 @@ Secure` and a more complex setup for cross-origin cookie use.
 **Rejected.** Synchronous erase in the request path — too slow and blocks the response for large tenants. Silent erase without confirmation — unrecoverable mistake if tenant name is mistyped.
 
 ---
-## Post-integration remediation (audit fixes)
+## Post-integration hardening
 
-A remediation pass after the frontend/backend integration restored several
-properties that had regressed. Each is summarized here; DESIGN.md is the as-built
-record.
+Decisions taken during a security/correctness pass after the frontend/backend
+integration. Each entry states the decision that shipped (not a to-do); `DESIGN.md`
+is the as-built record.
 
 ### D-R-001 — `/actions/*` authenticate with the verified widget JWT (not headers)
 
@@ -874,16 +866,21 @@ cost rows were silently failing). (d) `mint-token` verifies `student ∈ tenant`
 from prior fix-ups; each silently broke a feature (persona prompt, registrar
 notifications, cost view, cross-tenant mint).
 
-## Second remediation wave (auth regression + remaining M/L + DESIGN §10 gaps)
+## Second hardening pass (auth + DEFINER surface + tracing)
 
 ### D-R-008 — `keel_definer` role restores cross-tenant SECURITY DEFINER functions
 
 **Decision.** A dedicated `keel_definer` role (`NOLOGIN BYPASSRLS`, created by the
 superuser in `scripts/db-init.sh`, granted to `keel_app` as membership) owns every
-SECURITY DEFINER cross-tenant function (`keel_find_user_by_email`, `portal_*`,
-`platform_*`, `widget_*`, `tenant_names_all`). Migration 0011 reassigns them and
-grants `SELECT`; `db-init.sh` adds `ALTER DEFAULT PRIVILEGES … GRANT SELECT … TO
-keel_definer` for future tables. **Why.** A prior ownership change set these to
+genuinely cross-tenant SECURITY DEFINER function that must read *before* a tenant
+session exists: `keel_find_user_by_email` (Keel-console login), the operator
+aggregates (`platform_*`), and the startup bootstrap reads (`widget_*`,
+`tenant_names_all`). Migration 0011 reassigns them and grants `SELECT`; `db-init.sh`
+adds `ALTER DEFAULT PRIVILEGES … GRANT SELECT … TO keel_definer` for future tables.
+*(The `portal_*` lookups were briefly in this set too, but the portal always knows its
+own tenant, so they were later replaced with RLS-scoped queries and dropped in
+migration 0012 — see D-R-015. The list above is the final BYPASSRLS surface.)*
+**Why.** A prior ownership change set these to
 `keel_app` (`NOBYPASSRLS`), so they ran *under* RLS with no tenant context and
 returned only `tenant_id IS NULL` rows — every tenant_admin/student/portal login
 silently 401'd; only the operator could log in. `keel_app` stays `NOBYPASSRLS`
@@ -1064,27 +1061,12 @@ have billing and aid consequences);
 waitlist worker for that section). These are listed here so the simplification is on
 the record, not silently assumed.
 
-### D-P6-002 — The agent enrolls by course code; the engine resolves the section
-
-**Decision.** `stage_enrollment` now takes `course_codes + term + year`, not section
-UUIDs. The tool resolves each course to one open, conflict-free section itself
-(`_resolve_sections_for_courses`, a greedy time-conflict-free pick over open sections)
-and freezes the resolved `section_ids` on the action row. **Why.** The LLM only ever
-sees course codes (from `propose_plan`'s plan cards); it has no way to know section
-UUIDs, so the previous `section_ids`-typed tool made the agent give up and tell the
-student to "use the official registration portal" — the exact opposite of Keel's job.
-Resolving codes → sections server-side keeps section selection in the deterministic
-engine (per the core rule, the LLM never self-picks a write target) and lets the agent
-complete the enrollment it was asked to do. The frozen-payload `section_ids` and the
-`execute_enrollment_tx` contract are unchanged, so the approval/write/audit path and
-its safety tests are untouched.
-
-### D-P6-003 — Agentic, preference-aware section selection (registration-section-flow)
+### D-P6-002 — Agentic, preference-aware section selection (registration-section-flow)
 
 **Decision.** Registration section choice is **agentic, not portal-style filtering**.
 The student states preferences in natural language ("no 8am, no Fridays"); the engine
 returns the open-section pool and the agent/engine pick a fitting, conflict-free,
-**open** section per course — extending D-P6-002. Concretely:
+**open** section per course. Concretely:
 
 - **The LLM picks sections, the engine verifies (mirrors the plan propose→verify loop).**
   `propose_sections` (read-only; realises `SPEC.md §7`'s `search_sections`) returns each
@@ -1093,8 +1075,8 @@ returns the open-section pool and the agent/engine pick a fitting, conflict-free
   calls `stage_enrollment(section_ids=[...])`. `_verify_chosen_sections` re-verifies each
   chosen id: exists, belongs to a requested course (an injected id for an unrelated course
   is rejected), is open, and the set is conflict-free — invalid → `ToolError` → the LLM
-  repairs. This supersedes the older D-P6-002 "LLM never sees section UUIDs" stance: the
-  LLM may now choose sections because the engine re-verifies every one before staging.
+  repairs. The LLM may choose sections precisely because the engine re-verifies every one
+  before staging (the engine still owns legality and the final write target).
 - **Fallback ("you pick for me"):** `stage_enrollment` with no `section_ids` runs
   `_resolve_sections_for_courses`, which ranks pref-meeting sections first (greedy,
   conflict-free) — the engine picks. Either path returns the chosen day/time + instructor;
