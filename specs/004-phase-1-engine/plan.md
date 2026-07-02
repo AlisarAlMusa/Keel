@@ -1,6 +1,6 @@
 # Keel Deterministic Engine — PLAN
 
-How we build what SPEC.md defines. Decisions, algorithms, layout, testing.
+How we build what docs/SPEC.md defines. Decisions, algorithms, layout, testing.
 
 ---
 
@@ -47,7 +47,7 @@ feasibility, so adding a producer adds zero new feasibility logic.
   requirements, credits, `pct_complete`, `progress_rate`, and the eligible-now
   set (§4.4 of SPEC).
 - **Workload:** `sum(difficulty × credits)` per term → raw index + band by fixed
-  thresholds (thresholds pinned in config, justified in DECISIONS.md).
+  thresholds (thresholds pinned in config, justified in docs/DECISIONS.md).
 - **Greedy planner:** from the eligible-now pool, repeatedly pick the
   highest-priority eligible course (priority = unlocks-most-downstream, then
   required-before-elective, stable tie-break by code) until the credit cap is

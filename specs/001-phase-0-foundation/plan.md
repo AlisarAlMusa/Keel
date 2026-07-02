@@ -39,18 +39,18 @@ The defining structural decision is the **two-package / three-image** build arch
 | Principle | Phase 0 relevance | Status |
 |-----------|-------------------|--------|
 | I. Three-Layer Boundary | No LLM/engine/models in Phase 0; the *structure* that enforces the boundary (layered dirs, `domain/engine/` placeholder, `services/actions/` placeholder) is created so later code lands in the right place. | ✅ PASS — boundary-preserving structure created; no logic that could violate it. |
-| II. Spec-Before-Code | This `plan.md` follows `spec.md`; `SPEC.md`/`ARCH.md` already define later contracts. No engine/action code is written in Phase 0, so the "human writes edge-case tests first" gate is **not yet triggered** (Phase 1). | ✅ PASS — flagged: engine edge-case tests are a Phase 1 human gate. |
+| II. Spec-Before-Code | This `plan.md` follows `spec.md`; `docs/SPEC.md`/`docs/ARCHITECTURE.md` already define later contracts. No engine/action code is written in Phase 0, so the "human writes edge-case tests first" gate is **not yet triggered** (Phase 1). | ✅ PASS — flagged: engine edge-case tests are a Phase 1 human gate. |
 | III. Verifier-Gated Surfaces | No plan surfaces and no writes happen in Phase 0. The `outbox` + `audit_log` tables and `services/actions/` package placeholder are created so the pattern has a home. | ✅ PASS — no surfaces/writes exist to gate yet. |
 | IV. Defense-in-Depth Tenant Isolation (NON-NEGOTIABLE) | RLS on every tenant-owned table is delivered in the baseline migration (layer 1). Repository-layer filtering (layer 2) and pgvector filtering (layer 3) get their structure (base repo, pgvector column) but enforcement logic lands with the features that use them. | ✅ PASS — layer 1 enforced now; layers 2–3 scaffolded. |
 | V. Continuous Eval Gates | CI skeleton (ruff, mypy, build, smoke) lands this phase; eval gates are added the day each feature lands (later phases). `tests/eval/eval_thresholds.yaml` seeded as a placeholder. | ✅ PASS — CI from Day 1. |
-| VI. Honest by Design | No models/claims yet. `DECISIONS.md` started; synthetic seed data documented as illustrative. | ✅ PASS. |
+| VI. Honest by Design | No models/claims yet. `docs/DECISIONS.md` started; synthetic seed data documented as illustrative. | ✅ PASS. |
 | VII. Bounded Intelligence | No agent in Phase 0. `agent/` scaffolded empty; LangGraph not installed yet. | ✅ PASS. |
 
 **Technology stack mandates**: uv-only ✅; no torch in any container ✅ (model-server is onnxruntime/joblib only); Vault fail-closed ✅; one Postgres + pgvector ✅; async throughout ✅. **No violations — Complexity Tracking not required.**
 
 ## Build & Packaging Architecture (first-class decision)
 
-This is the structural backbone of the repository and the most consequential Phase 0 decision. It is recorded here and in `DECISIONS.md`.
+This is the structural backbone of the repository and the most consequential Phase 0 decision. It is recorded here and in `docs/DECISIONS.md`.
 
 ### Two Python packages, two isolated environments
 
@@ -111,7 +111,7 @@ specs/001-phase-0-foundation/
 ├── .env.example                   # documents every config value
 ├── .gitignore
 ├── README.md                      # run instructions stub
-├── DECISIONS.md                   # started this phase
+├── docs/DECISIONS.md                   # started this phase
 │
 ├── src/keel/
 │   ├── __init__.py

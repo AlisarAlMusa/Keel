@@ -1,7 +1,7 @@
 # DESIGN.md — Keel System Design (as built)
 
 How Keel is actually constructed today, after the post-integration remediation
-pass. `ARCH.md` is the conceptual shape; `SPEC.md` the component contracts;
+pass. `ARCHITECTURE.md` is the conceptual shape; `SPEC.md` the component contracts;
 `PRODUCTION.md` the SIS boundary; this document is the **as-built design of record**
 — how the pieces fit, where the boundaries are, and why. Where this contradicts
 older prose, this file and the code win.

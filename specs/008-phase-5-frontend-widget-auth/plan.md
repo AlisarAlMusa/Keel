@@ -1,6 +1,6 @@
 # Keel — Day 6 PLAN (Implementation Patterns & Order)
 
-How to build Day 6. `spec.md` = contracts; `production.md` = architecture; this = the *how*, with pseudocode for the load-bearing parts. Code is illustrative — match it to the existing codebase.
+How to build Day 6. `spec.md` = contracts; `docs/PRODUCTION.md` = architecture; this = the *how*, with pseudocode for the load-bearing parts. Code is illustrative — match it to the existing codebase.
 
 ---
 
@@ -91,7 +91,7 @@ Applied at mint and on every chat request. CORS/CSP middleware is configured fro
 ---
 
 ## 4. Keel admin
-- RAG upload: parse files → chunk (justify size/overlap in DECISIONS.md) → embed via hosted API → insert tenant-tagged pgvector rows. Reuse the Day-3 RAG pipeline.
+- RAG upload: parse files → chunk (justify size/overlap in docs/DECISIONS.md) → embed via hosted API → insert tenant-tagged pgvector rows. Reuse the Day-3 RAG pipeline.
 - Widget config: persist `{persona, allowed_origins, enabled_tools}`; safety rails untouched (locked in code).
 - Cost: `GROUP BY tenant_id, kind` over `usage_event`.
 - Audit: read-only render.
@@ -118,7 +118,7 @@ Agent enrollment → SIS-domain `enrollments`. Registrar decision → SIS-domain
 
 ## 7. Adapter (document only this week)
 - Do **not** refactor the data layer pre-demo. The `source='keel'` write goes through whatever repository writes enrollments today; name that boundary the SIS write path.
-- Capture the `SISGateway` interface + `sis_integration` per-tenant config in `production.md`. Post-demo: extract the interface, add a `LocalPostgresSIS` impl. BUT THIS IS NOT NOW, POST DEMO
+- Capture the `SISGateway` interface + `sis_integration` per-tenant config in `docs/PRODUCTION.md`. Post-demo: extract the interface, add a `LocalPostgresSIS` impl. BUT THIS IS NOT NOW, POST DEMO
 
 ---
 
@@ -135,3 +135,46 @@ Agent enrollment → SIS-domain `enrollments`. Registrar decision → SIS-domain
 3. Auto-replan worker.
 4. Student stage-set pages (keep My Schedule + badges).
 **Never cut:** auth boundary · approval gate · My Schedule write-proof · registrar request queue · guardrails.
+
+---
+
+## 10. Addendum build order — operator, auth, second portal
+
+> Merged from the former `missing_recovery.md` PLAN section. Contracts: spec.md §10;
+> rationale: DECISIONS D-A-001…005, D-R-008/011/015.
+
+1. **Migrations** — `tenants.status`; nullable `users.tenant_id` + `'platform_operator'` role;
+   check constraints; `platform_audit`; `platform_usage_summary`; `portal_user`.
+2. **Auth** — role-stamped token issue (operator token has **no** `tenant_id`);
+   `require_role("platform_operator")`; `assert_tenant_active` wired into `/internal/mint-token`,
+   `/chat`, and Keel admin login the same day.
+3. **Operator endpoints** — tenants list / provision / suspend / unsuspend / erase(enqueue) /
+   cost / audit. Router carries `Depends(require_role("platform_operator"))` and uses
+   `get_session` directly — **never** `db_with_tenant`, never a tenant-content repository.
+4. **Erase worker** — `erase_tenant` RQ job: cascade delete-by-`tenant_id` (Keel + demo SIS) →
+   admins → MinIO prefix → tenant row → audit counts. Idempotent (missing tenant = no-op).
+5. **Portal auth** — `POST /portal/login {email,password}` (bcrypt, tenant-bound to
+   `PORTAL_TENANT`, generic 401); `/portal/keel-token` unchanged except the suspend gate.
+6. **Second portal** — one image, two compose services (Northane :3001, Summit :3002),
+   differing only by env; each tenant's `allowed_origins` lists its own portal origin.
+7. **Platform Console UI** — same shell/stack as the admin console, role-gated to the operator.
+
+**Risks:** operator leaking into tenant scope is the whole grade — mitigate structurally (no
+`tenant_id`, no content repo under `/platform`) and prove with a CI gate, not code review; keep
+the cross-tenant cost read confined to the one `SECURITY DEFINER` aggregate function; erase is
+destructive → confirmation + async + idempotent + audit, with suspend as the reversible default.
+
+## 11. Section-selection flow — build notes
+
+> Merged from the former `registration-section-flow.md`. Contract: spec.md §11; rationale:
+> DECISIONS D-P6-001/002.
+
+- Mirror the plan loop: engine returns the **open-section pool**; the LLM proposes a
+  preference-fitting combination; the engine re-verifies (open + conflict-free + right course +
+  eligible) before staging. Reuse `domain/engine/sections.py::find_sections` for the
+  conflict-free logic; one shared section-time formatting path.
+- Route a failed stage tool (a `ToolError` with no `action_id`) **back to the LLM** (the
+  `_after_stage` conditional edge in `agent/graph.py`) so the student hears "that section is full
+  — want the waitlist or another term?" instead of a silent loop.
+- System-prompt rule: on a tool error, tell the student plainly and offer the waitlist / another
+  term; never fabricate a result.

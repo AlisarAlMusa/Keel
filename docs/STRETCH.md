@@ -140,7 +140,7 @@ multi-region/per-tenant deployment model.
 they picked **within the same conversation**. The `save_plan` / `load_plan` /
 `activate_plan` tools and the `plans` table exist, but the demo registration flow does
 **not** route through "save → list saved plans → re-validate → pick → register". Decided
-2026-06-25 (see `specs/008-phase-5-frontend-widget-auth/registration-section-flow.md`).
+2026-06-25 (see `specs/008-phase-5-frontend-widget-auth/spec.md §11`).
 
 **Deferred:** wire saved/named plans into the student-facing flow — list multiple saved
 plans ("Fast Graduation", "Easy Semester", "Career-aligned"), re-validate each against
