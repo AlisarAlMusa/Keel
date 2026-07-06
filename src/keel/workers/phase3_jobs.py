@@ -672,14 +672,14 @@ def expiry_sweep_job() -> dict[str, int]:
         total_expired = 0
         try:
             from keel.infra.database.session import tenant_session
-            from keel.services.actions import ActionRepo
+            from keel.repositories.core import ActionsRepository
 
             # Enumerate tenants from the non-RLS table, then expire per-tenant
             # under RLS (an unscoped scan of `actions` returns zero rows).
             for tenant_id in await _active_tenant_ids(session_factory):
                 async with tenant_session(session_factory, tenant_id) as session:
-                    count = await ActionRepo.expire_stale(
-                        session, tenant_id=tenant_id, older_than=cutoff
+                    count = await ActionsRepository(session, tenant_id).expire_stale(
+                        older_than=cutoff
                     )
                     total_expired += count
 

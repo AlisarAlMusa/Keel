@@ -420,9 +420,9 @@ def build_agent(
 
             # Load the frozen action payload.
             async with _ts(deps.session_factory, tenant_id) as session:
-                from keel.services.actions import ActionRepo as _AR
+                from keel.repositories.core import ActionsRepository
 
-                action = await _AR.get(session, UUID(action_id_str))
+                action = await ActionsRepository(session, tenant_id).get(UUID(action_id_str))
 
                 if not action:
                     return {"messages": [AIMessage(content=f"Action {action_id_str} not found.")]}
@@ -575,7 +575,7 @@ async def _dispatch_execute(
         # Institutional F1–F4: the write services manage their own RLS-scoped
         # transaction; here we invoke them with approved=True (reached ONLY on an
         # approved resume) from the FROZEN payload, then mark the action executed.
-        from keel.services.actions import ActionRepo as _AR2
+        from keel.repositories.core import ActionsRepository
         from keel.services.actions import institutional as _inst
 
         message: str
@@ -624,7 +624,7 @@ async def _dispatch_execute(
 
         # Mark the action executed (its own audit row was written by the service).
         async with _ts(deps.session_factory, tenant_id) as session:
-            await _AR2.set_executed(session, action_id)
+            await ActionsRepository(session, tenant_id).set_executed(action_id)
         return message
 
     else:
