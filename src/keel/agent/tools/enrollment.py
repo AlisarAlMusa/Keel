@@ -301,4 +301,3 @@ def make_enrollment_tools(deps: AgentDeps) -> list[Any]:
 # ---------------------------------------------------------------------------
 # Validation helpers (read-only — called inside stage tools)
 # ---------------------------------------------------------------------------
-

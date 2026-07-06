@@ -75,9 +75,7 @@ class SectionRepository(TenantScopedRepository):
         )
         return [dict(r) for r in rows.mappings()]
 
-    async def by_ids(
-        self, *, term: str, year: int, ids: list[str]
-    ) -> list[dict[str, Any]]:
+    async def by_ids(self, *, term: str, year: int, ids: list[str]) -> list[dict[str, Any]]:
         """Sections matching the given ids within a term/year (with seat counts)."""
         rows = await self._session.execute(
             sa.text(
@@ -143,9 +141,7 @@ class SectionRepository(TenantScopedRepository):
         )
         return [dict(r) for r in rows.mappings()]
 
-    async def any_open_seat(
-        self, *, course_code: str, term: str | None, year: int | None
-    ) -> bool:
+    async def any_open_seat(self, *, course_code: str, term: str | None, year: int | None) -> bool:
         """True if some section of the course has an open seat (term-scoped when given)."""
         clauses = ["tenant_id = :tid", "course_code = :code", "enrolled < capacity"]
         params: dict[str, Any] = {"tid": str(self._tenant_id), "code": course_code}

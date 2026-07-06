@@ -326,4 +326,3 @@ def make_advising_chat_tools(deps: AgentDeps) -> list[Any]:
         )
 
     return [course_advisor, degree_audit_chat, failure_recovery, major_switch_advice]
-
