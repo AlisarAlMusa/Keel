@@ -1106,3 +1106,34 @@ error reaches the student conversationally (e.g. offer the waitlist) instead of 
 **Deferred.** Saved/named plans surfacing (A4) and a richer structured `SectionCard`
 widget component are deferred to `STRETCH.md`; the chosen schedule is surfaced today via
 the staged approval message text.
+
+### D-R-016 — Behavior-preserving layering refactor; action-repo consolidation
+
+**Decision.** A behavior-preserving refactor moved logic to its documented layer
+without changing any behavior, prompts, SQL semantics, routes, or outputs:
+
+- **Agent tools → application services.** Each `@tool` is now a thin adapter
+  (validate via `args_schema` → resolve identity → delegate). Use-case
+  orchestration lives in `services/{planning_service/,advising_service,
+  enrollment_service,institutional_service,guidance_service}`; the tool files
+  shrank ~74% (e.g. `planning.py` 1717→320). Services receive infra collaborators
+  explicitly (`session_factory`, `llm`, …) and open the tenant session — so the
+  per-tool-call unit-of-work boundary is unchanged.
+- **Cross-cutting layers extracted:** all inline SQL → `repositories/` (entity
+  repos: students/sections/programs/waitlist); LLM prompt/loops → `agent/llm/`;
+  card/markdown builders → `presenters/`; row→engine-object mappers → `mappers/`.
+- **Action-repo consolidation (F-5).** `ActionRepo` (in `services/actions`, which
+  held inline action SQL) was **eliminated**; `ActionsRepository`
+  (`repositories/core.py`) is the single home for staged-action CRUD. All SQL moved
+  byte-identical; all call sites + tests updated.
+- **Tenant-assert removed.** The unused `_assert_tenant` post-fetch hook (its only
+  caller was the dead `ActionsRepository.get`; the live path never asserted) was
+  removed, and `SECURITY.md §2.2` / DESIGN / SPEC / constitution updated to state
+  the actual mechanism: **RLS (layer 1) + `WHERE tenant_id` filtering (layer 2)**.
+
+**Why.** The as-built code had drifted from the documented layering (SQL,
+presentation, and prompts inlined in agent tools). Moving each concern to its
+documented home improves separation/testability with zero behavior change, guarded
+at every step by ruff + mypy(strict) + the unit/write-safety suites. **No logic
+changed** — SQL and prompt strings were verified byte-identical against the prior
+committed versions.

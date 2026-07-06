@@ -449,7 +449,7 @@ class GuardResult(BaseModel):
 
 **Rules:**
 - RLS policy on every tenant-owned table keyed on a per-request `SET app.tenant_id`.
-- Every repository method also filters by `tenant_id` (defense in depth) and asserts the row's tenant matches the caller.
+- Every repository is bound to a `tenant_id` and filters by it in its queries (defense in depth, in addition to RLS).
 - pgvector retrieval filters by `tenant_id`.
 - Widget auth: public `widget_id` → short-lived signed token (HS256, ≤15 min) bound to `tenant_id` + origin; server validates token **and** `Origin` header against the tenant's allowlist. CORS/CSP are defense-in-depth, never the boundary.
 - Platform operator endpoints can provision/suspend/erase tenants but cannot read tenant content.
