@@ -83,9 +83,7 @@ async def plan_graduation(
         if stu.get("current_year"):
             start_year = int(stu["current_year"])
 
-        transcript, catalog, graph, coreqs, program = _build_engine_objects(
-            data, term, start_year
-        )
+        transcript, catalog, graph, coreqs, program = _build_engine_objects(data, term, start_year)
         if program is None:
             return ToolError(
                 error="Student has no program — cannot plan a path.",
@@ -104,9 +102,7 @@ async def plan_graduation(
         }
         # Career-aligned electives to prioritise (capped + catalog-checked, so a bad hint
         # can't distort the plan — the engine still only schedules valid courses).
-        prefer_codes = frozenset(
-            c.upper() for c in (prefer_courses or []) if c.upper() in catalog
-        )
+        prefer_codes = frozenset(c.upper() for c in (prefer_courses or []) if c.upper() in catalog)
         base = greedy_plan(
             transcript=transcript,
             program=program,
@@ -353,9 +349,7 @@ async def swap_grad_plan_course(
             emit_plans([result.card])
         return result.message
     except ValueError as exc:
-        return ToolError(
-            error=str(exc), retryable=False, category="validation"
-        ).model_dump_json()
+        return ToolError(error=str(exc), retryable=False, category="validation").model_dump_json()
     except Exception as exc:
         _log.error("tool.swap_grad_plan_course.error", error=str(exc))
         return ToolError(error=str(exc), retryable=True, category="engine").model_dump_json()

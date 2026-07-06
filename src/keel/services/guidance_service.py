@@ -95,9 +95,7 @@ async def elective_recommender(
             strengths=_strengths(transcript, catalog),
             prefs=f"difficulty={difficulty}; career={career_direction or 'unspecified'}",
         )
-        res = await llm.ainvoke(
-            [SystemMessage(content=prompt), HumanMessage(content="Rank them.")]
-        )
+        res = await llm.ainvoke([SystemMessage(content=prompt), HumanMessage(content="Rank them.")])
         ranked_text = _extract_advise_text(res.content)
         # Hard rule: drop anything the LLM named that isn't in the eligible set.
         kept = [c for c in eligible_set if c in ranked_text.upper()]
@@ -150,9 +148,7 @@ async def career_path(
         # Constrain named courses to the catalog (drop inventions).
         mentioned = set(__import__("re").findall(r"[A-Z]{2,4}\d{3}[A-Z]?", text.upper()))
         invalid = [m for m in mentioned if m not in catalog]
-        note = (
-            f"\n\n(Note: removed non-catalog courses: {', '.join(invalid)}.)" if invalid else ""
-        )
+        note = f"\n\n(Note: removed non-catalog courses: {', '.join(invalid)}.)" if invalid else ""
         caveat = f"\n\n_{_CAREER_CAVEAT}_"
         if _CAREER_CAVEAT.lower() not in text.lower():
             text += caveat

@@ -94,9 +94,7 @@ async def propose_plan(
         # Keep the string form in sync — later section queries/cards use start_term.
         start_term = term.value
 
-        transcript, catalog, graph, coreqs, program = _build_engine_objects(
-            data, term, start_year
-        )
+        transcript, catalog, graph, coreqs, program = _build_engine_objects(data, term, start_year)
         if program is None:
             return ToolError(
                 error="Student has no program — cannot propose a plan.",
@@ -260,9 +258,7 @@ async def propose_plan(
                     if notes:
                         ranking += "\n\n⚠ **Heads up:** " + "; ".join(notes) + "."
                 except Exception as exc:  # noqa: BLE001
-                    _log.warning(
-                        "tool.propose_plan.registrability_check_failed", error=str(exc)
-                    )
+                    _log.warning("tool.propose_plan.registrability_check_failed", error=str(exc))
 
         # --- Section time preference check ---
         # Query sections for the first candidate's courses and report availability
@@ -271,9 +267,7 @@ async def propose_plan(
         min_min = (min_start_hour or 0) * 60  # convert hour → minutes-since-midnight
 
         if scored and (ex_days or min_min > 0):
-            first_codes = (
-                scored[0]["plan"].terms[0].course_codes if scored[0]["plan"].terms else []
-            )
+            first_codes = scored[0]["plan"].terms[0].course_codes if scored[0]["plan"].terms else []
             section_notes: list[str] = []
             if first_codes:
                 try:
@@ -553,8 +547,7 @@ async def propose_sections(
             )
         else:
             lines.append(
-                "No conflict-free, preference-fitting schedule could be built "
-                "for these courses."
+                "No conflict-free, preference-fitting schedule could be built for these courses."
             )
         if unavailable:
             lines.append(
@@ -605,9 +598,7 @@ async def simulate_whatif(
                 error=f"Student {student_id} not found.", retryable=False, category="validation"
             ).model_dump_json()
 
-        transcript, catalog, graph, coreqs, program = _build_engine_objects(
-            data, term, start_year
-        )
+        transcript, catalog, graph, coreqs, program = _build_engine_objects(data, term, start_year)
         if program is None:
             return ToolError(
                 error="Student has no program.", retryable=False, category="validation"

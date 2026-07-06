@@ -467,9 +467,7 @@ async def stage_waitlist_join(
                 # as long as that section is genuinely full — even if a DIFFERENT section
                 # of the same course is open (the student wants this one). Only the chosen
                 # section's own capacity decides whether a waitlist makes sense.
-                sec = await _get_section_row(
-                    session, tenant_id=tenant_id, section_id=section_id
-                )
+                sec = await _get_section_row(session, tenant_id=tenant_id, section_id=section_id)
                 if sec is None or sec["course_code"] != course_code:
                     return ToolError(
                         error=(

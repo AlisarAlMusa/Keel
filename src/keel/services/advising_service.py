@@ -255,13 +255,9 @@ async def predict_risk(
             )
             return err.model_dump_json()
 
-        transcript, catalog, graph, coreqs, program = _build_engine_objects(
-            data, term, start_year
-        )
+        transcript, catalog, graph, coreqs, program = _build_engine_objects(data, term, start_year)
         if program is None:
-            err = ToolError(
-                error="Student has no program.", retryable=False, category="validation"
-            )
+            err = ToolError(error="Student has no program.", retryable=False, category="validation")
             return err.model_dump_json()
 
         from keel.domain.engine.audit import audit as _audit
@@ -368,9 +364,7 @@ async def gpa_estimate(
         )
         result = await llm.ainvoke(
             [
-                SystemMessage(
-                    content="You are an academic advisor giving a rough GPA estimate."
-                ),  # noqa: E501
+                SystemMessage(content="You are an academic advisor giving a rough GPA estimate."),  # noqa: E501
                 HumanMessage(content=prompt),
             ]
         )
@@ -472,9 +466,7 @@ async def course_advisor(
         )
         res = await llm.ainvoke(
             [
-                SystemMessage(
-                    content="You are a course advisor. Ground every claim in context."
-                ),
+                SystemMessage(content="You are a course advisor. Ground every claim in context."),
                 HumanMessage(content=prompt),
             ]
         )
@@ -535,9 +527,7 @@ async def degree_audit_chat(
             remaining_credits=remaining_credits,
             eligible_courses=eligible,
         )
-        res = await llm.ainvoke(
-            [SystemMessage(content=prompt), HumanMessage(content="Summarize.")]
-        )
+        res = await llm.ainvoke([SystemMessage(content=prompt), HumanMessage(content="Summarize.")])
         narrative = _extract_advise_text(res.content)
         return (
             f"**Degree audit**\n"
