@@ -36,7 +36,7 @@ The request middleware sets `app.tenant_id` from the authenticated token **befor
 
 ### 2.2 Repository layer: explicit tenant scoping
 
-Every repository method accepts `tenant_id` as a parameter and includes it in `WHERE` clauses. This is defense-in-depth — if an RLS policy were misconfigured, the query still filters. Repositories also **assert** that returned rows' `tenant_id` matches the caller, catching any leak at read time.
+Every repository is bound to a `(session, tenant_id)` and issues its queries inside a tenant-scoped (RLS) session. Most queries also include an explicit `WHERE tenant_id = :tid` filter as defense-in-depth — if an RLS policy were misconfigured, the query still scopes to the caller's tenant. (By-id lookups on the action-lifecycle table rely on the session's RLS scoping.)
 
 ### 2.3 pgvector: tenant-filtered retrieval
 

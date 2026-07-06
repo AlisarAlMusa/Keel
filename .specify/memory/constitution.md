@@ -24,7 +24,7 @@ No plan reaches a student that hasn't satisfied `validate_plan(...) == []`. No s
 
 Tenant boundaries are enforced at three independent layers:
 1. PostgreSQL Row-Level Security on every tenant-owned table.
-2. Repository-layer `tenant_id` filtering and post-fetch assertion.
+2. Repository-layer `tenant_id` filtering (defense-in-depth over RLS).
 3. pgvector tenant-filtered retrieval.
 
 No single layer is trusted alone. A misconfigured RLS policy is caught by the repository; a buggy repository is caught by RLS; a leaked embedding is impossible because retrieval filters before similarity. Cross-tenant access is impossible by construction, not by convention. CI red-team probes prove it on every PR.

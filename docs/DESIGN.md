@@ -49,8 +49,8 @@ enforced in review and by import direction:
 - **services/** — orchestration: the router, the action pattern, the agent host,
   advising/guidance use-cases.
 - **repositories/** — tenant-scoped DB access for the write/ledger/action surface,
-  each bound to one `(session, tenant_id)` and asserting row tenant on read
-  (defense-in-depth layer 2). See §5.
+  each bound to one `(session, tenant_id)` and filtering by `tenant_id`
+  (defense-in-depth layer 2, over RLS). See §5.
 - **domain/** — pure types + the deterministic **engine** (DAG, audit, verifier,
   sections, workload, planner). No I/O, no framework, no LLM. Verified pure.
 - **infra/** — DB, Redis, Vault, MinIO, model-server client, guardrails, tracing,
@@ -130,9 +130,8 @@ Key invariants now enforced:
    `current_setting('app.tenant_id')`. The app connects as `keel_app`
    (`NOSUPERUSER NOBYPASSRLS`), so an unset tenant matches no rows (fail-closed).
 2. **Repository / query scoping.** The write/ledger/action path goes through
-   `repositories/` (`LedgerRepository`, `ActionsRepository`, …) bound to a tenant
-   and asserting row tenant on read. Read paths filter `WHERE tenant_id = :tid` on
-   every query in addition to RLS.
+   `repositories/` (`LedgerRepository`, `ActionsRepository`, …) bound to a tenant.
+   Read paths filter `WHERE tenant_id = :tid` on every query in addition to RLS.
 3. **pgvector.** RAG retrieval filters `WHERE tenant_id = :tid` and runs under the
    tenant session.
 
