@@ -8,14 +8,18 @@ from keel.repositories.base import TenantScopedRepository
 from keel.repositories.core import (
     ActionsRepository,
     LedgerRepository,
-    actions,
-    ledger,
 )
+from keel.repositories.programs import ProgramRepository
+from keel.repositories.sections import SectionRepository
+from keel.repositories.students import StudentRepository
+from keel.repositories.waitlist import WaitlistRepository
 
 __all__ = [
     "TenantScopedRepository",
     "LedgerRepository",
     "ActionsRepository",
-    "ledger",
-    "actions",
+    "StudentRepository",
+    "ProgramRepository",
+    "SectionRepository",
+    "WaitlistRepository",
 ]
