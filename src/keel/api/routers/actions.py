@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 from keel.api.auth import WidgetContext, get_widget_context, verify_origin_or_403
 from keel.infra.database.session import tenant_session
 from keel.logging import get_logger
-from keel.services.actions import ActionRepo
+from keel.repositories.core import ActionsRepository
 
 router = APIRouter(prefix="/actions", tags=["actions"])
 _log = get_logger(__name__)
@@ -106,7 +106,8 @@ async def approve_action(
 
     # ---- Load action (Layer 1: RLS scopes to tenant) --------------------
     async with tenant_session(session_factory, UUID(current_user.tenant_id)) as session:
-        action = await ActionRepo.get(session, action_uuid)
+        actions_repo = ActionsRepository(session, current_user.tenant_id)
+        action = await actions_repo.get(action_uuid)
         if not action:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found.")
 
@@ -129,7 +130,7 @@ async def approve_action(
             )
 
         # ---- All checks passed — approve --------------------------------
-        await ActionRepo.set_approved(session, action_uuid)
+        await actions_repo.set_approved(action_uuid)
         thread_id: str = str(action["thread_id"])
         action_type: str = str(action["type"])
         # session commits on context-manager exit
@@ -225,7 +226,8 @@ async def reject_action(
     action_uuid = _parse_uuid(action_id)
 
     async with tenant_session(session_factory, UUID(current_user.tenant_id)) as session:
-        action = await ActionRepo.get(session, action_uuid)
+        actions_repo = ActionsRepository(session, current_user.tenant_id)
+        action = await actions_repo.get(action_uuid)
         if not action:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found.")
 
@@ -238,7 +240,7 @@ async def reject_action(
                 detail=f"Action is already {action['status']}.",
             )
 
-        await ActionRepo.set_rejected(session, action_uuid)
+        await actions_repo.set_rejected(action_uuid)
         thread_id = str(action["thread_id"])
 
     _log.info(

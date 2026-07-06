@@ -1,9 +1,12 @@
 """Action service layer — the resumable-agent write pattern (spec §2).
 
 Public surface:
-  ActionRepo   — CRUD for the actions table.
   audit_write  — insert one audit_log row inside a transaction.
   outbox_write — insert one outbox row inside a transaction.
+  notify_context — human-readable details for a notification.
+
+Action-table CRUD (the staged-action lifecycle) lives in
+``keel.repositories.core.ActionsRepository``.
 
 All write actions (enrollment, waitlist, petition, major-change, graduation-app)
 share these primitives.  Each action type provides its own execute_*_tx function
@@ -12,7 +15,6 @@ that calls audit_write + outbox_write inside the same transaction.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -91,112 +93,6 @@ async def notify_context(
         "instructor": str(s["instructor"] or "the instructor") if s else "the instructor",
         "when": fmt_slots(s["slots"]) if s else "",
     }
-
-
-# ---------------------------------------------------------------------------
-# ActionRepo — all action-table access goes through here
-# ---------------------------------------------------------------------------
-
-
-class ActionRepo:
-    """Thin async repository for the actions table.
-
-    Every method is tenant-scoped via the session's RLS setting.
-    Student-level isolation (student_id check) is the caller's responsibility
-    (handled by the approve handler before calling any repo method).
-    """
-
-    @staticmethod
-    async def get(session: AsyncSession, action_id: UUID) -> dict[str, Any] | None:
-        """Load one action row.  RLS scopes to current tenant — cross-tenant → None."""
-        row = await session.execute(
-            sa.text(
-                "SELECT id, tenant_id, student_id, thread_id, type, payload, "
-                "status, created_at, decided_at, audit_ref "
-                "FROM actions WHERE id = :aid"
-            ),
-            {"aid": str(action_id)},
-        )
-        r = row.mappings().first()
-        return dict(r) if r else None
-
-    @staticmethod
-    async def insert_pending(
-        session: AsyncSession,
-        *,
-        tenant_id: UUID,
-        student_id: UUID,
-        thread_id: str,
-        action_type: str,
-        payload: dict[str, Any],
-    ) -> UUID:
-        """Insert a pending action row and return its id (via ActionsRepository)."""
-        from keel.repositories.core import ActionsRepository
-
-        return await ActionsRepository(session, tenant_id).insert_pending(
-            student_id=student_id,
-            thread_id=thread_id,
-            action_type=action_type,
-            payload=payload,
-        )
-
-    @staticmethod
-    async def set_approved(session: AsyncSession, action_id: UUID) -> None:
-        """Transition pending → approved; record decided_at."""
-        await session.execute(
-            sa.text(
-                "UPDATE actions SET status = 'approved', decided_at = :now "
-                "WHERE id = :aid AND status = 'pending'"
-            ),
-            {"aid": str(action_id), "now": datetime.now(UTC)},
-        )
-
-    @staticmethod
-    async def set_rejected(session: AsyncSession, action_id: UUID) -> None:
-        """Transition pending → rejected; record decided_at."""
-        await session.execute(
-            sa.text(
-                "UPDATE actions SET status = 'rejected', decided_at = :now "
-                "WHERE id = :aid AND status = 'pending'"
-            ),
-            {"aid": str(action_id), "now": datetime.now(UTC)},
-        )
-
-    @staticmethod
-    async def set_executed(
-        session: AsyncSession,
-        action_id: UUID,
-        audit_ref: int | None = None,
-    ) -> None:
-        """Transition approved → executed; set audit_ref (NULL when the write's
-        own audit row id isn't threaded back, e.g. institutional filings)."""
-        await session.execute(
-            sa.text(
-                "UPDATE actions SET status = 'executed', audit_ref = :ref "
-                "WHERE id = :aid AND status = 'approved'"
-            ),
-            {"aid": str(action_id), "ref": audit_ref},
-        )
-
-    @staticmethod
-    async def set_failed(session: AsyncSession, action_id: UUID) -> None:
-        """Transition approved → failed (e.g. re-validation failed on resume)."""
-        await session.execute(
-            sa.text("UPDATE actions SET status = 'failed', decided_at = :now WHERE id = :aid"),
-            {"aid": str(action_id), "now": datetime.now(UTC)},
-        )
-
-    @staticmethod
-    async def expire_stale(
-        session: AsyncSession,
-        *,
-        tenant_id: UUID,
-        older_than: datetime,
-    ) -> int:
-        """Expire all pending actions older than older_than (via ActionsRepository)."""
-        from keel.repositories.core import ActionsRepository
-
-        return await ActionsRepository(session, tenant_id).expire_stale(older_than=older_than)
 
 
 # ---------------------------------------------------------------------------

@@ -22,8 +22,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from keel.logging import get_logger
+from keel.repositories.core import ActionsRepository
 from keel.services.actions import (
-    ActionRepo,
     audit_write,
     notify_context,
     outbox_write,
@@ -132,7 +132,7 @@ async def join_waitlist_tx(
         },
     )
 
-    await ActionRepo.set_executed(session, action_id, audit_id)
+    await ActionsRepository(session, tenant_id).set_executed(action_id, audit_id)
 
     _log.info(
         "waitlist.joined",
@@ -205,7 +205,7 @@ async def leave_waitlist_tx(
         after={"status": "left", "action_id": str(action_id)},
     )
 
-    await ActionRepo.set_executed(session, action_id, audit_id)
+    await ActionsRepository(session, tenant_id).set_executed(action_id, audit_id)
 
     _log.info(
         "waitlist.left",

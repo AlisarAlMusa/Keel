@@ -64,9 +64,9 @@ async def test_injected_request_never_reaches_execute() -> None:
 
     fake_id = uuid.uuid4()
 
-    # Simulate the ActionRepo returning None (unknown action_id).
+    # Simulate ActionsRepository returning None (unknown action_id).
     with patch(
-        "keel.services.actions.ActionRepo.get",
+        "keel.repositories.core.ActionsRepository.get",
         new=AsyncMock(return_value=None),
     ):
         with patch("keel.infra.database.session.tenant_session") as mock_ts:
@@ -79,7 +79,7 @@ async def test_injected_request_never_reaches_execute() -> None:
             # Simulate execute_node behaviour for a missing action.
             result = await _simulate_execute_node(
                 action_id_str=str(fake_id),
-                action_override=None,  # ActionRepo.get returns None
+                action_override=None,  # ActionsRepository.get returns None
                 deps=_fake_deps(),
             )
 
@@ -258,7 +258,7 @@ async def test_cross_student_approve_returns_403() -> None:
     # Patch tenant_session at the local import in the router module.
     fake_action_get = AsyncMock(return_value=action_row)
     with patch("keel.api.routers.actions.tenant_session", return_value=mock_ctx):
-        with patch("keel.api.routers.actions.ActionRepo.get", new=fake_action_get):
+        with patch("keel.repositories.core.ActionsRepository.get", new=fake_action_get):
             client = TestClient(app, raise_server_exceptions=False)
             # Student A (verified token) tries to approve Student B's action.
             response = client.post(
@@ -301,7 +301,7 @@ async def _simulate_execute_node(
     async def fake_ar_get(session, action_uuid):
         return action_override
 
-    with patch("keel.services.actions.ActionRepo.get", new=fake_ar_get):
+    with patch("keel.repositories.core.ActionsRepository.get", new=fake_ar_get):
         with patch("keel.infra.database.session.tenant_session") as mock_ts:
             mock_session = AsyncMock()
             mock_ts.return_value.__aenter__ = AsyncMock(return_value=mock_session)

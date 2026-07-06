@@ -22,7 +22,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from keel.logging import get_logger
-from keel.services.actions import ActionRepo, audit_write, notify_context, outbox_write
+from keel.repositories.core import ActionsRepository
+from keel.services.actions import audit_write, notify_context, outbox_write
 
 _log = get_logger(__name__)
 
@@ -271,7 +272,7 @@ async def execute_enrollment_tx(
                     "dropped_section_ids": dropped_sections,
                 },
             )
-            await ActionRepo.set_executed(session, action_id, audit_id)
+            await ActionsRepository(session, tenant_id).set_executed(action_id, audit_id)
             message = (
                 "Your registration for that term was updated to match the approved plan "
                 f"({len(dropped_sections)} course(s) dropped)."
@@ -325,7 +326,7 @@ async def execute_enrollment_tx(
     )
 
     # Mark action executed (references audit row).
-    await ActionRepo.set_executed(session, action_id, audit_id)
+    await ActionsRepository(session, tenant_id).set_executed(action_id, audit_id)
 
     _log.info(
         "enrollment.executed",
